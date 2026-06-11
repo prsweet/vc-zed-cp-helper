@@ -8,3 +8,4 @@ debuggers/DebugodPy3Ejector.py
 # Added by cargo
 
 /target
+boilerplate.cpp
