@@ -7,6 +7,7 @@ import re
 import socketserver
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -56,19 +57,49 @@ LANGUAGES = {
 }
 DEFAULT_LANG = "cpp23"
 CONFIG_PATH = Path(APP_DIR).expanduser() / "config.json"
+DEFAULT_BROWSER = "safari"
+
+# Browser profiles: app_name, engine (webkit/chromium), type (applescript)
+BROWSERS = {
+    "safari": {"app_name": "Safari", "engine": "webkit", "type": "applescript"},
+    "brave":  {"app_name": "Brave Browser", "engine": "chromium", "type": "applescript"},
+    "chrome": {"app_name": "Google Chrome", "engine": "chromium", "type": "applescript"},
+    "orion":  {"app_name": "Orion", "engine": "webkit", "type": "applescript"},
+}
+
+
+def _load_config():
+    """Load config.json, returning a dict."""
+    if CONFIG_PATH.exists():
+        try:
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(cfg):
+    """Save a dict to config.json."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
 def get_saved_lang():
     """Read the saved language from config. Falls back to DEFAULT_LANG."""
-    if CONFIG_PATH.exists():
-        try:
-            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            lang = cfg.get("lang", DEFAULT_LANG)
-            if lang in LANGUAGES:
-                return lang
-        except Exception:
-            pass
+    cfg = _load_config()
+    lang = cfg.get("lang", DEFAULT_LANG)
+    if lang in LANGUAGES:
+        return lang
     return DEFAULT_LANG
+
+
+def get_saved_browser():
+    """Read the saved browser from config. Falls back to DEFAULT_BROWSER."""
+    cfg = _load_config()
+    browser = cfg.get("browser", DEFAULT_BROWSER)
+    if browser in BROWSERS:
+        return browser
+    return DEFAULT_BROWSER
 
 
 def set_lang_cmd(args):
@@ -77,24 +108,31 @@ def set_lang_cmd(args):
     if lang not in LANGUAGES:
         print(f"❌ Unknown language '{lang}'. Available: {', '.join(LANGUAGES.keys())}")
         return
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    cfg = {}
-    if CONFIG_PATH.exists():
-        try:
-            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    cfg = _load_config()
     cfg["lang"] = lang
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    _save_config(cfg)
     print(f"✅ Language set to \033[92m{lang}\033[0m")
-    print(
-        f"   Compiler:  {LANGUAGES[lang].get('compile', LANGUAGES[lang].get('run', []))}"
-    )
-    print(
-        f"   CF Submit:  {LANGUAGES[lang]['cf_name']} (id={LANGUAGES[lang]['cf_id']})"
-    )
+    print(f"   Compiler:  {LANGUAGES[lang].get('compile', LANGUAGES[lang].get('run', []))}")
+    print(f"   CF Submit:  {LANGUAGES[lang]['cf_name']} (id={LANGUAGES[lang]['cf_id']})")
     print(f"\n   Saved to {CONFIG_PATH}")
     print("   All future Run/Submit tasks will use this language.")
+
+
+def set_browser_cmd(args):
+    """Save the chosen browser to config."""
+    browser = args.browser.lower()
+    if browser not in BROWSERS:
+        print(f"❌ Unknown browser '{browser}'. Available: {', '.join(BROWSERS.keys())}")
+        print(f"   Note: Put quotes around names with spaces in tasks.json (e.g. 'Brave Browser')")
+        return
+    cfg = _load_config()
+    cfg["browser"] = browser
+    _save_config(cfg)
+    b = BROWSERS[browser]
+    print(f"✅ Browser set to \033[92m{b['app_name']}\033[0m")
+    print(f"   Engine:    {b['engine']}")
+    print(f"\n   Saved to {CONFIG_PATH}")
+    print("   All future Submit tasks will use this browser.")
 
 
 def is_folder_open_in_zed(folder_path):
@@ -154,20 +192,13 @@ def process_problem(data, active_folder):
     # Write template if file doesn't exist
     if not file_path.exists():
         content = ""
-        boilerplate = Path("/Users/deep/.config/zed/snippets/c++.json").expanduser()
+        # Try APP_DIR/boilerplate.cpp first
+        boilerplate = Path(APP_DIR).expanduser() / "boilerplate.cpp"
         if boilerplate.exists():
-            import json
-
             try:
-                snippet_data = json.loads(boilerplate.read_text(encoding="utf-8"))
-                body = snippet_data.get("CP Template Advanced", {}).get("body", [])
-                content = "\n".join(body) if isinstance(body, list) else body
-                content = re.sub(r"\$\d+", "", content)
-                content = re.sub(r"\$\{\d+(:.*?)?\}", "", content)
+                content = boilerplate.read_text(encoding="utf-8")
             except Exception as e:
-                print(f"[Companion] Failed to parse snippet: {e}")
-                content = ""
-
+                print(f"[Companion] Failed to read boilerplate: {e}")
         file_path.write_text(content, encoding="utf-8")
 
     # Tests blocks & Meta extraction
@@ -266,6 +297,11 @@ def listen_cmd(args):
 
     force_kill_process_on_port(PORT)
 
+    # Write PID file
+    pid_path = Path(APP_DIR).expanduser() / "listener.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(os.getpid()), encoding="utf-8")
+
     print(f"[Listen] Starting Competitive Companion listener on port {PORT}...")
     print(f"[Listen] Saving problems natively to: {target_dir}")
     print("[Listen] Waiting for requests from browser extension...")
@@ -284,7 +320,7 @@ def listen_cmd(args):
             zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
             # Handle Zed Logic: Open folder if missing
             if not is_folder_open_in_zed(target_dir):
-                subprocess.run([zed_bin, str(taret_dir)])
+                subprocess.run([zed_bin, str(target_dir)])
                 time.sleep(1)  # Brief pause to let Zed initialize the workspace
 
             # '-a' adds the file to the active or nearest workspace cleanly
@@ -296,6 +332,11 @@ def listen_cmd(args):
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[Listen] Server stopped.")
+    finally:
+        try:
+            pid_path.unlink()
+        except Exception:
+            pass
 
 
 # ======================== Run Tests ========================
@@ -462,21 +503,6 @@ def run_cmd(args):
     print("=====================================")
 
 
-# ======================== Add Test ========================
-def add_test_cmd(args):
-    source_file = Path(args.file).resolve()
-    tests_file = get_tests_file_path(source_file)
-
-    print("\n--- Input (Paste and press Ctrl+D or double newline) ---")
-    input_lines = sys.stdin.read().strip()
-    # If the environment closes stdin we can't do this easily.
-    # We will just write a stub and tell them to edit the JSON list.
-
-    # Wait honestly the easiest way to add a test is to let them edit the .tests file directly!
-    print("Editing tests! In Zed, just open this file:")
-    print(str(tests_file))
-
-
 # ======================== Submit ========================
 
 
@@ -530,58 +556,13 @@ def _detect_platform(url):
     return None
 
 
-def _run_applescript(applescript, fill_js, result_js=None):
-    """Write temp files, run AppleScript, stream stderr live, return stdout."""
-    Path("/tmp/foc_fill_submit.js").write_text(fill_js)
-    if result_js:
-        Path("/tmp/foc_read_result.js").write_text(result_js)
-    Path("/tmp/foc_submit.applescript").write_text(applescript)
 
-    try:
-        proc = subprocess.Popen(
-            ["osascript", "/tmp/foc_submit.applescript"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for line in iter(proc.stderr.readline, ""):
-            info = line.strip()
-            if not info:
-                continue
-            if info.startswith("CAPTCHA:"):
-                sys.stdout.write(
-                    f"\r\033[K🔒 \033[91m{info} — solve it, script will continue automatically\033[0m\n"
-                )
-                sys.stdout.flush()
-            elif info.startswith("RELOAD:") or info.startswith("WAIT"):
-                sys.stdout.write(f"\r\033[K⏳ \033[93m{info}\033[0m")
-                sys.stdout.flush()
-            elif "RESULT" not in info and "REJECTED" not in info:
-                sys.stdout.write(f"\r\033[K👀 \033[90m{info}\033[0m")
-                sys.stdout.flush()
-        stdout, _ = proc.communicate()
-        sys.stdout.write("\n")
-        return stdout.strip()
-    finally:
-        for f in [
-            "/tmp/foc_fill_submit.js",
-            "/tmp/foc_read_result.js",
-            "/tmp/foc_submit.applescript",
-        ]:
-            try:
-                Path(f).unlink()
-            except:
-                pass
+# ======================== Fill & Result JavaScript ========================
+# These are shared across all browser engines — only the execution method differs.
 
-
-# --------------- Codeforces ---------------
-
-
-def _submit_codeforces(submit_url, problem_code, lang_id, code_b64):
-    """Full automation: fill code + language + problem, auto-submit, poll verdict."""
-
-    FILL_JS = (
-        r"""(function() {
+def _build_cf_fill_js(code_b64, lang_id, problem_code):
+    """Build the JavaScript that fills the Codeforces submit form."""
+    return r"""(function() {
     try {
         var code = atob('__CODE_B64__');
 
@@ -638,12 +619,12 @@ def _submit_codeforces(submit_url, problem_code, lang_id, code_b64):
         }
         return 'ERROR: Form not found.';
     } catch(e) { return 'ERROR: ' + e.message; }
-})();""".replace("__CODE_B64__", code_b64)
-        .replace("__LANG_ID__", lang_id)
-        .replace("__PROBLEM_CODE__", problem_code.upper())
-    )
+})();""".replace("__CODE_B64__", code_b64).replace("__LANG_ID__", lang_id).replace("__PROBLEM_CODE__", problem_code.upper())
 
-    RESULT_JS = r"""(function() {
+
+def _build_cf_result_js():
+    """Build the JavaScript that reads the Codeforces verdict."""
+    return r"""(function() {
     try {
         var url = document.location.href;
         var hasCap = false;
@@ -678,8 +659,158 @@ def _submit_codeforces(submit_url, problem_code, lang_id, code_b64):
     } catch(e) { return 'WAIT'; }
 })();"""
 
-    APPLESCRIPT = f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
-tell application "Safari"
+
+def _build_ac_fill_js(code_b64, lang_id, problem_code):
+    """Build the JavaScript that fills the AtCoder submit form."""
+    return r"""(function() {
+    try {
+        var code = atob('__CODE_B64__');
+
+        // 1. Select the problem from the task dropdown
+        var taskSelect = document.querySelector('select[name="data.TaskScreenName"]');
+        if (taskSelect) {
+            var target = '__PROBLEM_CODE__'.toLowerCase();
+            for (var i = 0; i < taskSelect.options.length; i++) {
+                if (taskSelect.options[i].value.toLowerCase() === target) {
+                    taskSelect.value = taskSelect.options[i].value;
+                    taskSelect.dispatchEvent(new Event('change', {bubbles: true}));
+                    try { $(taskSelect).trigger('change'); } catch(e) {}
+                    break;
+                }
+            }
+        }
+
+        // 2. Select language
+        var langSelects = document.querySelectorAll('select[name="data.LanguageId"]');
+        for (var s = 0; s < langSelects.length; s++) {
+            var sel = langSelects[s];
+            if (sel.offsetParent === null && langSelects.length > 1) continue;
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === '__LANG_ID__') {
+                    sel.value = '__LANG_ID__';
+                    sel.dispatchEvent(new Event('change', {bubbles: true}));
+                    try { $(sel).trigger('change'); } catch(e) {}
+                    break;
+                }
+            }
+        }
+
+        // 3. Inject code into the editor
+        setTimeout(function() {
+            var ta = document.querySelector('#sourceCode, textarea[name="sourceCode"], textarea.plain-textarea');
+            if (ta) { ta.value = code; ta.dispatchEvent(new Event('input', {bubbles: true})); }
+            try {
+                var editors = document.querySelectorAll('.ace_editor');
+                if (editors.length > 0) {
+                    var lastEd = editors[editors.length - 1];
+                    if (typeof ace !== 'undefined') ace.edit(lastEd).setValue(code, -1);
+                }
+            } catch(e) {}
+
+            // 4. Click submit
+            var btn = document.querySelector('#submit, input[type="submit"], button[type="submit"]');
+            if (btn) btn.click();
+        }, 800);
+
+        return 'SUBMITTED';
+    } catch(e) { return 'ERROR: ' + e.message; }
+})();""".replace("__CODE_B64__", code_b64).replace("__PROBLEM_CODE__", problem_code).replace("__LANG_ID__", lang_id)
+
+
+def _build_ac_result_js():
+    """Build the JavaScript that reads the AtCoder verdict."""
+    return r"""(function() {
+    try {
+        if (document.readyState !== 'complete') return 'WAIT';
+        var url = document.location.href;
+
+        // Still on submit page? Check for error banner
+        if (url.indexOf('/submit') > -1) {
+            var errorBanner = document.querySelector('.alert-danger, .alert.alert-danger, div.error');
+            if (errorBanner) return 'CAPTCHA';
+            return 'WAIT';
+        }
+
+        // Check for submission table rows
+        var rows = document.querySelectorAll('table.table-bordered tbody tr');
+        if (rows.length > 0) {
+            var verdictSpan = rows[0].querySelector('span.label');
+            if (verdictSpan) {
+                var vt = verdictSpan.textContent.trim();
+                if (vt === 'WJ' || vt === 'WR' || vt.indexOf('Judging') > -1 || vt.indexOf('/') > -1) {
+                    return 'RELOAD: ' + vt;
+                }
+                return 'RESULT: ' + vt;
+            }
+        }
+
+        if (url.indexOf('/submissions') > -1) return 'RELOAD: Waiting for results';
+        return 'WAIT';
+    } catch(e) { return 'WAIT'; }
+})();"""
+
+
+# ======================== AppleScript Engine ========================
+
+def _write_temp_js(content):
+    """Write JS to a secure temp file and return its path."""
+    fd, path = tempfile.mkstemp(suffix=".js", prefix="cphelper_")
+    os.write(fd, content.encode("utf-8"))
+    os.close(fd)
+    return path
+
+
+def _run_applescript(applescript, fill_js, result_js=None):
+    """Write temp files, run AppleScript, stream stderr live, return stdout."""
+    fill_path = _write_temp_js(fill_js)
+    result_path = _write_temp_js(result_js) if result_js else None
+
+    # Patch AppleScript to use the temp file paths
+    applescript = applescript.replace("__FILL_JS_PATH__", fill_path)
+    if result_path:
+        applescript = applescript.replace("__RESULT_JS_PATH__", result_path)
+
+    as_fd, as_path = tempfile.mkstemp(suffix=".applescript", prefix="cphelper_")
+    os.write(as_fd, applescript.encode("utf-8"))
+    os.close(as_fd)
+
+    try:
+        proc = subprocess.Popen(
+            ["osascript", as_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        for line in iter(proc.stderr.readline, ''):
+            info = line.strip()
+            if not info:
+                continue
+            if info.startswith("CAPTCHA:"):
+                sys.stdout.write(f"\r\033[K🔒 \033[91m{info} — solve it, script will continue automatically\033[0m\n")
+                sys.stdout.flush()
+            elif info.startswith("RELOAD:") or info.startswith("WAIT"):
+                sys.stdout.write(f"\r\033[K⏳ \033[93m{info}\033[0m")
+                sys.stdout.flush()
+            elif "RESULT" not in info and "REJECTED" not in info:
+                sys.stdout.write(f"\r\033[K👀 \033[90m{info}\033[0m")
+                sys.stdout.flush()
+        stdout, _ = proc.communicate()
+        sys.stdout.write("\n")
+        return stdout.strip()
+    finally:
+        for f in [fill_path, result_path, as_path]:
+            if f:
+                try:
+                    Path(f).unlink()
+                except Exception:
+                    pass
+
+
+def _build_applescript_webkit(app_name, submit_url, ready_selector):
+    """Build AppleScript for WebKit-based browsers (Safari, Orion).
+    Uses 'do JavaScript ... in <tab>' syntax."""
+    return f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
+tell application "{app_name}"
     if (count of windows) is 0 then make new document with properties {{URL:"about:blank"}}
     tell window 1 to set submitTab to make new tab with properties {{URL:"{submit_url}"}}
     set captchaAlerted to false
@@ -689,32 +820,28 @@ tell application "Safari"
             set pageCheck to do JavaScript "(function(){{
                 var isC = false;
                 if(document.title.indexOf('Just a moment')>-1 || document.title.indexOf('Attention Required')>-1) isC=true;
-                if(document.querySelector('iframe[src*=\\"challenge\\"], iframe[src*=\\"turnstile\\"]') && !document.querySelector('select[name=\\"programTypeId\\"]')) isC=true;
-                var err = document.querySelector('.error');
-                if(err && err.textContent.toLowerCase().indexOf('captcha') > -1) isC=true;
-
                 if(isC) return 'CAPTCHA';
-                if(document.querySelector('select[name=\\"programTypeId\\"]')) return 'READY';
+                if(document.querySelector('{ready_selector}')) return 'READY';
                 return 'WAITING';
             }})()" in submitTab
             if pageCheck is "READY" then exit repeat
             if pageCheck is "CAPTCHA" then
                 if captchaAlerted is false then
                     set captchaAlerted to true
-                    tell application "Safari" to activate
-                    log "CAPTCHA: Please solve the CAPTCHA in Safari..."
+                    tell application "{app_name}" to activate
+                    log "CAPTCHA: Please solve the CAPTCHA in {app_name}..."
                 end if
             end if
         on error errMsg
-            if errMsg contains "not allowed" then return "ERROR: Enable 'Allow JavaScript from Apple Events' in Safari"
+            if errMsg contains "not allowed" then return "ERROR: Enable 'Allow JavaScript from Apple Events' in {app_name}"
         end try
     end repeat
     delay 0.5
-    set fillJS to read POSIX file "/tmp/foc_fill_submit.js"
+    set fillJS to read POSIX file "__FILL_JS_PATH__"
     set submitResult to do JavaScript fillJS in submitTab
     if submitResult does not start with "SUBMITTED" then return submitResult
     delay 4
-    set resultJS to read POSIX file "/tmp/foc_read_result.js"
+    set resultJS to read POSIX file "__RESULT_JS_PATH__"
     set resultInfo to "UNKNOWN: Timed out"
     set resCaptchaAlerted to false
     repeat 120 times
@@ -727,7 +854,7 @@ tell application "Safari"
         if resultInfo is "CAPTCHA" then
             if resCaptchaAlerted is false then
                 set resCaptchaAlerted to true
-                tell application "Safari" to activate
+                tell application "{app_name}" to activate
             end if
             log "CAPTCHA: Waiting for you to solve and resubmit..."
         else
@@ -753,156 +880,81 @@ end tell
 tell application frontAppName to activate
 return resultInfo"""
 
-    return _run_applescript(APPLESCRIPT, FILL_JS, RESULT_JS)
 
-
-# --------------- AtCoder ---------------
-
-
-def _submit_atcoder(submit_url, problem_code, lang_id, code_b64):
-    """Full automation: fill code + language + problem, auto-submit, poll verdict."""
-
-    FILL_JS = (
-        r"""(function() {
-    try {
-        var code = atob('__CODE_B64__');
-
-        // 1. Select the problem from the task dropdown
-        var taskSelect = document.querySelector('select[name="data.TaskScreenName"]');
-        if (taskSelect) {
-            var target = '__PROBLEM_CODE__'.toLowerCase();
-            for (var i = 0; i < taskSelect.options.length; i++) {
-                if (taskSelect.options[i].value.toLowerCase() === target) {
-                    taskSelect.value = taskSelect.options[i].value;
-                    taskSelect.dispatchEvent(new Event('change', {bubbles: true}));
-                    // Also trigger Select2 if present
-                    try { $(taskSelect).trigger('change'); } catch(e) {}
-                    break;
-                }
-            }
-        }
-
-        // 2. Select language - find any visible select with data.LanguageId
-        var langSelects = document.querySelectorAll('select[name="data.LanguageId"]');
-        for (var s = 0; s < langSelects.length; s++) {
-            var sel = langSelects[s];
-            // AtCoder hides some selects per task; pick the visible one
-            if (sel.offsetParent === null && langSelects.length > 1) continue;
-            for (var i = 0; i < sel.options.length; i++) {
-                if (sel.options[i].value === '__LANG_ID__') {
-                    sel.value = '__LANG_ID__';
-                    sel.dispatchEvent(new Event('change', {bubbles: true}));
-                    try { $(sel).trigger('change'); } catch(e) {}
-                    break;
-                }
-            }
-        }
-
-        // 3. Inject code into the editor
-        // AtCoder uses a plain textarea OR ace editor
-        // Wait for language change to potentially swap the editor
-        setTimeout(function() {
-            var ta = document.querySelector('#sourceCode, textarea[name="sourceCode"], textarea.plain-textarea');
-            if (ta) { ta.value = code; ta.dispatchEvent(new Event('input', {bubbles: true})); }
-            try {
-                var editors = document.querySelectorAll('.ace_editor');
-                if (editors.length > 0) {
-                    var lastEd = editors[editors.length - 1];
-                    if (typeof ace !== 'undefined') ace.edit(lastEd).setValue(code, -1);
-                }
-            } catch(e) {}
-
-            // 4. Click submit
-            var btn = document.querySelector('#submit, input[type="submit"], button[type="submit"]');
-            if (btn) btn.click();
-        }, 800);
-
-        return 'SUBMITTED';
-    } catch(e) { return 'ERROR: ' + e.message; }
-})();""".replace("__CODE_B64__", code_b64)
-        .replace("__PROBLEM_CODE__", problem_code)
-        .replace("__LANG_ID__", lang_id)
-    )
-
-    RESULT_JS = r"""(function() {
-    try {
-        if (document.readyState !== 'complete') return 'WAIT';
-        var url = document.location.href;
-
-        // Still on submit page? Check for error banner = CAPTCHA/validation failure
-        if (url.indexOf('/submit') > -1) {
-            var errorBanner = document.querySelector('.alert-danger, .alert.alert-danger, div.error');
-            if (errorBanner) return 'CAPTCHA';
-            return 'WAIT';
-        }
-
-        // Check for submission table rows (we've been redirected to submissions page)
-        var rows = document.querySelectorAll('table.table-bordered tbody tr');
-        if (rows.length > 0) {
-            var verdictSpan = rows[0].querySelector('span.label');
-            if (verdictSpan) {
-                var vt = verdictSpan.textContent.trim();
-                // WJ = Waiting for Judging, WR = Waiting for Rejudging
-                if (vt === 'WJ' || vt === 'WR' || vt.indexOf('Judging') > -1 || vt.indexOf('/') > -1) {
-                    return 'RELOAD: ' + vt;
-                }
-                return 'RESULT: ' + vt;
-            }
-        }
-
-        if (url.indexOf('/submissions') > -1) return 'RELOAD: Waiting for results';
-        return 'WAIT';
-    } catch(e) { return 'WAIT'; }
-})();"""
-
-    APPLESCRIPT = f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
-tell application "Safari"
-    if (count of windows) is 0 then make new document with properties {{URL:"about:blank"}}
+def _build_applescript_chromium(app_name, submit_url, ready_selector):
+    """Build AppleScript for Chromium-based browsers (Chrome, Brave).
+    Uses 'execute javascript ... in active tab of window 1' syntax."""
+    return f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
+tell application "{app_name}"
+    if (count of windows) is 0 then make new window
     tell window 1 to set submitTab to make new tab with properties {{URL:"{submit_url}"}}
+    set captchaAlerted to false
     repeat 120 times
         delay 2
         try
-            if (do JavaScript "document.querySelector('select[name=\\"data.TaskScreenName\\"]') ? 'READY' : 'WAITING'" in submitTab) is "READY" then exit repeat
+            tell submitTab
+                set pageCheck to execute javascript "(function(){{
+                    var isC = false;
+                    if(document.title.indexOf('Just a moment')>-1 || document.title.indexOf('Attention Required')>-1) isC=true;
+                    if(isC) return 'CAPTCHA';
+                    if(document.querySelector('{ready_selector}')) return 'READY';
+                    return 'WAITING';
+                }})()"
+            end tell
+            if pageCheck is "READY" then exit repeat
+            if pageCheck is "CAPTCHA" then
+                if captchaAlerted is false then
+                    set captchaAlerted to true
+                    tell application "{app_name}" to activate
+                    log "CAPTCHA: Please solve the CAPTCHA in {app_name}..."
+                end if
+            end if
         on error errMsg
-            if errMsg contains "not allowed" then return "ERROR: Enable 'Allow JavaScript from Apple Events' in Safari"
+            if errMsg contains "not allowed" then return "ERROR: Enable 'Allow JavaScript from Apple Events' in {app_name} (View > Developer)"
         end try
     end repeat
     delay 0.5
-    set fillJS to read POSIX file "/tmp/foc_fill_submit.js"
-    set submitResult to do JavaScript fillJS in submitTab
+    set fillJS to read POSIX file "__FILL_JS_PATH__"
+    tell submitTab
+        set submitResult to execute javascript fillJS
+    end tell
     if submitResult does not start with "SUBMITTED" then return submitResult
     delay 4
-
-    -- Check if we're still on submit page with error (CAPTCHA or other issue)
-    set resultJS to read POSIX file "/tmp/foc_read_result.js"
+    set resultJS to read POSIX file "__RESULT_JS_PATH__"
     set resultInfo to "UNKNOWN: Timed out"
-    set captchaHandled to false
+    set resCaptchaAlerted to false
     repeat 120 times
         try
-            set resultInfo to do JavaScript resultJS in submitTab
+            tell submitTab
+                set resultInfo to execute javascript resultJS
+            end tell
         on error
             set resultInfo to "WAIT"
         end try
 
-        -- Detect: still on submit page with error = CAPTCHA or validation failure
         if resultInfo is "CAPTCHA" then
-            if captchaHandled is false then
-                set captchaHandled to true
-                set current tab of window 1 to submitTab
-                tell application "Safari" to activate
+            if resCaptchaAlerted is false then
+                set resCaptchaAlerted to true
+                tell application "{app_name}" to activate
             end if
             log "CAPTCHA: Waiting for you to solve and resubmit..."
         else
             log resultInfo
         end if
+
         if resultInfo starts with "RESULT:" or resultInfo starts with "REJECTED:" then exit repeat
         if resultInfo starts with "RELOAD:" then
-            do JavaScript "window.location.reload()" in submitTab
+            tell submitTab
+                execute javascript "window.location.reload()"
+            end tell
             delay 1
             repeat 30 times
                 delay 1
                 try
-                    if (do JavaScript "document.readyState" in submitTab) is "complete" then exit repeat
+                    tell submitTab
+                        set rs to execute javascript "document.readyState"
+                    end tell
+                    if rs is "complete" then exit repeat
                 end try
             end repeat
         else
@@ -917,11 +969,58 @@ end tell
 tell application frontAppName to activate
 return resultInfo"""
 
-    return _run_applescript(APPLESCRIPT, FILL_JS, RESULT_JS)
+
+def _check_browser_available(browser_key):
+    """Check if the selected browser is installed on macOS."""
+    b = BROWSERS[browser_key]
+    app_name = b["app_name"]
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", f'tell application "System Events" to get name of every process whose background only is false'],
+            capture_output=True, text=True, timeout=5
+        )
+        if app_name in result.stdout:
+            return True
+        # Check if app exists in /Applications
+        app_path = f"/Applications/{app_name}.app"
+        if Path(app_path).exists():
+            return True
+        print(f"❌ Browser '{app_name}' is not installed.")
+        print(f"   Install it or switch with: python3 main.py set_browser safari")
+        return False
+    except Exception:
+        return True  # Assume available if we can't check
 
 
-# --------------- Main submit dispatcher ---------------
+# ======================== Submit Dispatchers ========================
 
+def _submit_applescript(submit_url, fill_js, result_js, browser_key, ready_selector):
+    """Submit via AppleScript (Safari, Chrome, Brave, Orion)."""
+    b = BROWSERS[browser_key]
+    app_name = b["app_name"]
+    engine = b["engine"]
+
+    if engine == "webkit":
+        applescript = _build_applescript_webkit(app_name, submit_url, ready_selector)
+    elif engine == "chromium":
+        applescript = _build_applescript_chromium(app_name, submit_url, ready_selector)
+    else:
+        print(f"❌ Unknown engine type: {engine}")
+        return "ERROR: Unknown browser engine"
+
+    return _run_applescript(applescript, fill_js, result_js)
+
+
+def _do_submit(submit_url, fill_js, result_js, platform, browser_key, ready_selector):
+    """Route submission to the correct browser engine."""
+    b = BROWSERS[browser_key]
+    if b["type"] == "applescript":
+        return _submit_applescript(submit_url, fill_js, result_js, browser_key, ready_selector)
+    else:
+        return "ERROR: Unknown browser type"
+
+
+# ======================== Main Submit Command ========================
 
 def submit_cmd(args):
     source_file = Path(args.file).resolve()
@@ -948,21 +1047,33 @@ def submit_cmd(args):
     submit_url = info["submit_url"]
     problem_code = info["problem_code"]
 
-    print(f"🚀 \033[94mSubmitting {source_file.name}...\033[0m")
-    print(f"   Platform: {platform}")
-    print(f"   Problem:  {problem_code}")
-    print(f"   URL:      {submit_url}")
-
-    # Get language info based on platform
+    # Language info
     lang_key = get_saved_lang()
     lang = LANGUAGES[lang_key]
     if platform == "codeforces":
         lang_id, lang_name = lang["cf_id"], lang["cf_name"]
     elif platform == "atcoder":
         lang_id, lang_name = lang["ac_id"], lang["ac_name"]
-    print(f"   Lang:     {lang_name} ({lang_id})")
+    else:
+        print(f"❌ Unknown platform: {platform}")
+        return
 
-    # Confirmation — Enter to submit, Backspace/Delete to cancel
+    # Browser info
+    browser_key = get_saved_browser()
+    browser_name = BROWSERS[browser_key]["app_name"]
+
+    print(f"🚀 \033[94mSubmitting {source_file.name}...\033[0m")
+    print(f"   Platform: {platform}")
+    print(f"   Problem:  {problem_code}")
+    print(f"   URL:      {submit_url}")
+    print(f"   Lang:     {lang_name} ({lang_id})")
+    print(f"   Browser:  {browser_name}")
+
+    # Check browser availability
+    if not _check_browser_available(browser_key):
+        return
+
+    # Confirmation
     print()
     sys.stdout.write("\033[93m⚠️  Press Enter to submit, Backspace to cancel: \033[0m")
     sys.stdout.flush()
@@ -976,52 +1087,67 @@ def submit_cmd(args):
         ch = sys.stdin.read(1)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    print()  # newline after keypress
-    if ch in ("\x7f", "\x08", "\x1b"):  # backspace, delete, escape
+    print()
+    if ch in ("\x7f", "\x08", "\x1b"):
         print("❌ Submission cancelled.")
         return
 
-    print(
-        "\n\033[93mSafari will open in the background to handle the submission.\033[0m"
-    )
+    print(f"\n\033[93m{browser_name} will handle the submission.\033[0m")
 
-    def print_verdict(res):
-        print("\n==============================")
-        v = res.lower()
-        if res.startswith("RESULT:"):
-            if "accepted" in v or ": ac" in v:
-                print(f"\u2705 \033[92m{res}\033[0m")  # Green
-            elif any(
-                x in v
-                for x in [
-                    "wrong",
-                    "time limit",
-                    "memory limit",
-                    "runtime error",
-                    "compilation error",
-                    ": wa",
-                    ": tle",
-                    ": mle",
-                    ": re",
-                    ": ce",
-                ]
-            ):
-                print(f"\u274c \033[91m{res}\033[0m")  # Red
-            else:
-                print(f"\u26a0\ufe0f  \033[93m{res}\033[0m")  # Yellow
-        elif "REJECTED" in res or "ERROR" in res:
-            print(f"\u274c \033[91m{res}\033[0m")  # Red
-        else:
-            print(f"\u26a0\ufe0f  {res}")
-        print("==============================")
-
+    # Build JS and ready selector
     if platform == "codeforces":
-        res = _submit_codeforces(submit_url, problem_code, lang_id, code_b64)
-        print_verdict(res)
-
+        fill_js = _build_cf_fill_js(code_b64, lang_id, problem_code)
+        result_js = _build_cf_result_js()
+        ready_selector = 'select[name="programTypeId"]'
     elif platform == "atcoder":
-        res = _submit_atcoder(submit_url, problem_code, lang_id, code_b64)
-        print_verdict(res)
+        fill_js = _build_ac_fill_js(code_b64, lang_id, problem_code)
+        result_js = _build_ac_result_js()
+        ready_selector = 'select[name="data.TaskScreenName"]'
+
+    # Submit
+    res = _do_submit(submit_url, fill_js, result_js, platform, browser_key, ready_selector)
+
+    # Print verdict
+    print("\n==============================")
+    v = res.lower()
+    if res.startswith("RESULT:"):
+        if "accepted" in v or ": ac" in v:
+            print(f"\u2705 \033[92m{res}\033[0m")
+        elif any(x in v for x in ["wrong", "time limit", "memory limit", "runtime error", "compilation error", ": wa", ": tle", ": mle", ": re", ": ce"]):
+            print(f"\u274c \033[91m{res}\033[0m")
+        else:
+            print(f"\u26a0\ufe0f  \033[93m{res}\033[0m")
+    elif "REJECTED" in res or "ERROR" in res:
+        print(f"\u274c \033[91m{res}\033[0m")
+    else:
+        print(f"\u26a0\ufe0f  {res}")
+    print("==============================")
+
+
+# ======================== Status Command ========================
+
+def status_cmd(args):
+    """Check listener status and current config."""
+    # Check if listener is running
+    pid_path = Path(APP_DIR).expanduser() / "listener.pid"
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text().strip())
+            os.kill(pid, 0)  # Check if alive
+            print(f"✅ Listener is running (PID {pid})")
+        except (ValueError, ProcessLookupError):
+            print("❌ No listener is running (stale PID file)")
+            pid_path.unlink(missing_ok=True)
+    else:
+        print("❌ No listener is running.")
+
+    # Show current config
+    cfg = _load_config()
+    lang = cfg.get("lang", DEFAULT_LANG)
+    browser = cfg.get("browser", DEFAULT_BROWSER)
+    print(f"\n📋 Config ({CONFIG_PATH}):")
+    print(f"   Language: {lang}")
+    print(f"   Browser:  {browser} ({BROWSERS.get(browser, {}).get('app_name', '?')})")
 
 
 # ======================== Main ========================
@@ -1040,19 +1166,22 @@ def main():
 
     # Run
     run_parser = subparsers.add_parser("run", help="Compile and run tests")
-    run_parser.add_argument("file", help="Source code file")
-
-    # Add Test
-    add_test_parser = subparsers.add_parser("add_test", help="Add a test case")
-    add_test_parser.add_argument("file", help="Source code file")
+    run_parser.add_argument("file", help="Source code file (.cpp)")
 
     # Submit
-    submit_parser = subparsers.add_parser("submit", help="Submit to Codeforces")
-    submit_parser.add_argument("file", help="Source code file")
+    submit_parser = subparsers.add_parser("submit", help="Submit to Codeforces / AtCoder")
+    submit_parser.add_argument("file", help="Source code file (.cpp)")
 
     # Set Language
-    lang_parser = subparsers.add_parser("set_lang", help="Set language for run/submit")
-    lang_parser.add_argument("lang", choices=LANGUAGES.keys(), help="Language to use")
+    lang_parser = subparsers.add_parser("set_lang", help="Set C++ standard for run/submit")
+    lang_parser.add_argument("lang", choices=LANGUAGES.keys(), help="C++ standard to use")
+
+    # Set Browser
+    browser_parser = subparsers.add_parser("set_browser", help="Set browser for submissions")
+    browser_parser.add_argument("browser", choices=BROWSERS.keys(), help="Browser to use")
+
+    # Status
+    subparsers.add_parser("status", help="Check listener status and current config")
 
     args = parser.parse_args()
 
@@ -1060,12 +1189,14 @@ def main():
         listen_cmd(args)
     elif args.command == "run":
         run_cmd(args)
-    elif args.command == "add_test":
-        add_test_cmd(args)
     elif args.command == "submit":
         submit_cmd(args)
     elif args.command == "set_lang":
         set_lang_cmd(args)
+    elif args.command == "set_browser":
+        set_browser_cmd(args)
+    elif args.command == "status":
+        status_cmd(args)
 
 
 if __name__ == "__main__":

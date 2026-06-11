@@ -15,13 +15,16 @@ This tool runs entirely locally as a Python script. It intercepts problem data f
 
 ## Prerequisites
 
-- **macOS** (Relies on AppleScript to interact with Safari)
+- **macOS** (Relies on AppleScript to interact with browsers)
 - **Python 3.8+**
-- **Safari** with **"Allow JavaScript from Apple Events"** enabled.
-  - *To enable:* Safari -> Preferences -> Advanced -> Check "Show Develop menu". Then Develop -> Allow JavaScript from Apple Events.
+- **A supported browser** with **"Allow JavaScript from Apple Events"** enabled:
+  - **Safari**: Safari -> Preferences -> Advanced -> Check "Show Develop menu". Then Develop -> Allow JavaScript from Apple Events.
+  - **Brave**: View -> Developer -> Allow JavaScript from Apple Events
+  - **Chrome**: View -> Developer -> Allow JavaScript from Apple Events
+  - **Orion**: Similar to Safari (WebKit-based)
 - **[Zed Code Editor](https://zed.dev/)**
 - **C++ Compiler** (e.g., `g++` installed via Homebrew)
-- **[Competitive Companion](https://github.com/jmerle/competitive-companion)** browser extension for Chrome/Firefox/Safari.
+- **[Competitive Companion](https://github.com/jmerle/competitive-companion)** browser extension for Chrome/Firefox/Safari/Brave.
 
 ## Installation
 
@@ -69,8 +72,20 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following 4 ta
     "allow_concurrent_runs": false
   },
   {
-    "label": "CP: Set Browser [Orion]",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser 'Orion'",
+    "label": "CP: Set Browser [Safari]",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser safari",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "CP: Set Browser [Brave]",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser brave",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "CP: Status",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py status",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
   }
@@ -107,8 +122,10 @@ You only have to do this once. Run the **CP: Set Language [cpp20]** task.
 *(You can press `TAB` before hitting enter to modify it to `cpp23`, `python`, `java`, etc.)*
 This saves the active language inside `~/.vc-zed-cp-helper/config.json`. Every "Run" or "Submit" task will use this language.
 
-Similarly, you can run **CP: Set Browser [Orion]** to change your web automation engine. 
-*(Note: Ensure you put quotes around the browser name in your `tasks.json` file if your browser name contains spaces! Example: `'Google Chrome'`)*.
+Similarly, run **CP: Set Browser [Safari]** (or Brave) to choose which browser handles submissions. 
+*(Note: Ensure you put quotes around the browser name in your `tasks.json` file if your browser name contains spaces! Example: `'Brave Browser'`).*
+
+Available browsers: `safari`, `brave`, `chrome`, `orion`
 
 ### 3. Testing 
 Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and run **CP: Run Tests**. The script compiles the code dynamically and tests every embedded sample case.
