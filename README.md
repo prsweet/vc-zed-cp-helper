@@ -2,29 +2,31 @@
 
 A fully automated, native background tool for managing competitive programming workflows seamlessly in the [Zed](https://zed.dev/) editor on macOS.
 
-This tool runs entirely locally as a Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with problem-specific template and test cases, allows you to instantly compile and run tests in Zed, and even fully automates submissions to Codeforces and AtCoder using your chosen browser.
+This tool runs entirely locally as a Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with problem-specific template and test cases, allows you to instantly compile and run tests in Zed, and even fully automates submissions to Codeforces and AtCoder using Safari.
 
 ## Features
 
 - 📥 **Auto-Parses Problems**: Captures problem requirements and sample test cases via Competitive Companion.
 - 🏗️ **Native C++ Template Injection**: Injects test cases directly into block comments at the bottom of the `.cpp` file (no multiple `.in`/`.out` files).
 - 🚀 **Auto-Run Test Cases**: Compiles and runs all embedded test cases locally with precise execution time per case.
-- 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating your browser.
+- 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
 - 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
 - 🧱 **No WASM/Sandboxing Limits**: Standard Zed CP extensions have network/sandbox limits. This native approach has zero limits.
 
 ## Prerequisites
 
-- **macOS** (Relies on AppleScript to interact with browsers)
+- **macOS** (Relies on AppleScript to interact with Safari)
 - **Python 3.8+**
-- **A supported browser** with **"Allow JavaScript from Apple Events"** enabled:
-  - **Safari**: Safari → Preferences → Advanced → Check "Show Develop menu". Then Develop → Allow JavaScript from Apple Events.
-  - **Brave**: View → Developer → Allow JavaScript from Apple Events
-  - **Chrome**: View → Developer → Allow JavaScript from Apple Events
-  - **Orion**: Similar to Safari (WebKit-based)
+- **Safari** with **"Allow JavaScript from Apple Events"** enabled:
+  - Safari → Preferences → Advanced → Check "Show Develop menu"
+  - Then Develop → Allow JavaScript from Apple Events
 - **[Zed Code Editor](https://zed.dev/)**
 - **C++ Compiler** (e.g., `g++` installed via Homebrew)
 - **[Competitive Companion](https://github.com/jmerle/competitive-companion)** browser extension for Chrome/Firefox/Safari/Brave.
+
+### Why Safari Only?
+
+Submission automation requires the browser to run JavaScript in the background without bringing the window to the foreground. **Only Safari supports this** via AppleScript's `do JavaScript ... in tab` command. Other browsers (Brave, Chrome, Orion) require the window to be foregrounded, which interrupts your workflow.
 
 ## Installation
 
@@ -38,7 +40,12 @@ cd ~ && git clone https://github.com/prsweet/vc-zed-cp-helper.git .vc-zed-cp-hel
 *(Note: If you want to install it to a different custom folder or path, you must edit the `APP_DIR = "~/.vc-zed-cp-helper"` variable at the top of `main.py` to match your desired path!)*
 
 ### 2. Add Custom Code Template (Optional)
-Put your default `C++` (or Python/Java) template inside the app directory at `~/.vc-zed-cp-helper/boilerplate.cpp` (or whatever custom `APP_DIR` you set). If this file doesn't exist, it will just leave your new files empty before injecting tests.
+Put your default template inside the app directory at `~/.vc-zed-cp-helper/`:
+- C++ → `boilerplate.cpp`
+- Python → `boilerplate.py`
+- Java → `boilerplate.java`
+
+If the language-specific file doesn't exist, it falls back to `boilerplate.cpp`. If neither exists, new files will be empty before injecting tests.
 
 ### 3. Setup Zed Tasks
 Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following tasks with your `APP_DIR` to integrate smoothly with Zed's task runner (`cmd+shift+R`):
@@ -72,8 +79,8 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following task
     "allow_concurrent_runs": false
   },
   {
-    "label": "CP: Set Browser [safari]",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser safari",
+    "label": "CP: Set Template [boilerplate]",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py set_template boilerplate",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
   },
@@ -111,14 +118,10 @@ At the start of your programming session, open Zed and launch the **CP: Start Li
 
 Click the green `+` on the Competitive Companion extension in your browser when viewing a Codeforces or AtCoder problem. Zed will automatically open the generated source file.
 
-### 2. Set Language / Browser
+### 2. Set Language
 You only have to do this once. Run the **CP: Set Language [cpp23]** task. 
 *(You can press `TAB` before hitting enter to modify it to `cpp20`, `cpp17`, `python`, `java`, etc.)*
 This saves the active language inside `~/.vc-zed-cp-helper/config.json`. Every "Run" or "Submit" task will use this language.
-
-Similarly, run **CP: Set Browser [safari]** (or brave) to choose which browser handles submissions.
-
-Available browsers: `safari`, `brave`, `chrome`, `orion`
 
 ### 3. Testing 
 Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and run **CP: Run Tests**. The script compiles the code dynamically and tests every embedded sample case.
@@ -126,15 +129,15 @@ Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and
 ### 4. Direct Submissions
 Run the **CP: Submit to Codeforces / AtCoder** task. 
 - It strips out the embedded test case blocks from the bottom.
-- Opens your chosen browser invisibly, finds the Codeforces/AtCoder judge, sets the code, sets your selected language, and safely submits.
+- Opens Safari invisibly, finds the Codeforces/AtCoder judge, sets the code, sets your selected language, and safely submits.
 - **For Codeforces:** It tracks the submission live and prints `WJ`, `Running on test 5`, until eventually showing `✅ ACCEPTED` or `❌ WRONG ANSWER` directly in Zed's terminal.
-- **For AtCoder:** Validates the submission and handles Captchas via browser forwarding if required.
+- **For AtCoder:** Validates the submission and handles Captchas via Safari forwarding if required.
 
 ## Dealing with CAPTCHAs
 Platforms like AtCoder, and occasionally Codeforces (via Cloudflare), heavily use invisible CAPTCHAs.
 If the automation hits a CAPTCHA wall:
-1. The terminal output will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in [Browser]`.
-2. The browser will be brought to the foreground automatically on the submit page.
+1. The terminal output will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in Safari`.
+2. Safari will be brought to the foreground automatically on the submit page.
 3. Once you manually click the CAPTCHA (and/or submit), the script detects the form change, and automatically resumes live verdict polling in your Zed terminal!
 
 ## Supporting New Languages
@@ -171,7 +174,7 @@ Instead of maintaining two separate template files, make one IDE point to the ot
      }
    }
    ```
-4. Run **CP: Set Template** task and set it to `zed_snippets`
+4. Run **CP: Status** task and verify it shows `Template: Zed snippets (cpp.json)`
 
 Now edit `cpp.json` in either Zed or VS Code — both see the same file.
 

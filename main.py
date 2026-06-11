@@ -1,6 +1,7 @@
 import argparse
 import base64
 import http.server
+import io
 import json
 import os
 import re
@@ -19,21 +20,21 @@ APP_DIR = "~/.vc-zed-cp-helper"  # CHANGE THIS ACCORDINGLY
 # Language profiles: compiler command, CF/AtCoder language IDs
 LANGUAGES = {
     "cpp20": {
-        "compile": ["g++-15", "-std=c++20", "-O2", "-Wall", "-Wextra", "-Wshadow"],
+        "compile": ["g++", "-std=c++20", "-O2", "-Wall", "-Wextra"],
         "cf_id": "89",
         "cf_name": "GNU G++20 13.2 (64 bit)",
         "ac_id": "5001",
         "ac_name": "C++ 20 (gcc 12.2)",
     },
     "cpp23": {
-        "compile": ["g++-15", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Wshadow"],
+        "compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra"],
         "cf_id": "91",
         "cf_name": "GNU G++23 14.2 (64 bit, msys2)",
         "ac_id": "5002",
         "ac_name": "C++ 23 (gcc 12.2)",
     },
     "cpp17": {
-        "compile": ["g++-15", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Wshadow"],
+        "compile": ["g++", "-std=c++17", "-O2", "-Wall", "-Wextra"],
         "cf_id": "54",
         "cf_name": "GNU G++17 7.3.0",
         "ac_id": "5001",
@@ -60,22 +61,18 @@ CONFIG_PATH = Path(APP_DIR).expanduser() / "config.json"
 DEFAULT_BROWSER = "safari"
 DEFAULT_TEMPLATE = "boilerplate"  # "boilerplate" or "zed_snippets"
 
-# Browser profiles: app_name, engine (webkit/chromium), type (applescript)
-BROWSERS = {
-    "safari": {"app_name": "Safari", "engine": "webkit", "type": "applescript"},
-    "brave":  {"app_name": "Brave Browser", "engine": "chromium", "type": "applescript"},
-    "chrome": {"app_name": "Google Chrome", "engine": "chromium", "type": "applescript"},
-    "orion":  {"app_name": "Orion", "engine": "webkit", "type": "applescript"},
-}
-
 
 def _load_config():
     """Load config.json, returning a dict."""
     if CONFIG_PATH.exists():
         try:
             return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            print(f"⚠️  Warning: {CONFIG_PATH} contains invalid JSON. Using defaults.")
+        except PermissionError:
+            print(f"⚠️  Warning: Cannot read {CONFIG_PATH} (permission denied). Using defaults.")
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to read {CONFIG_PATH}: {e}. Using defaults.")
     return {}
 
 
@@ -98,7 +95,8 @@ def get_saved_browser():
     """Read the saved browser from config. Falls back to DEFAULT_BROWSER."""
     cfg = _load_config()
     browser = cfg.get("browser", DEFAULT_BROWSER)
-    if browser in BROWSERS:
+    # Only Safari is supported for silent submissions
+    if browser == "safari":
         return browser
     return DEFAULT_BROWSER
 
@@ -122,18 +120,16 @@ def set_lang_cmd(args):
 def set_browser_cmd(args):
     """Save the chosen browser to config."""
     browser = args.browser.lower()
-    if browser not in BROWSERS:
-        print(f"❌ Unknown browser '{browser}'. Available: {', '.join(BROWSERS.keys())}")
-        print(f"   Note: Put quotes around names with spaces in tasks.json (e.g. 'Brave Browser')")
+    if browser != "safari":
+        print(f"❌ Only Safari is supported for silent submissions.")
+        print(f"   Other browsers (Brave, Chrome, Orion) cannot submit in the background.")
         return
     cfg = _load_config()
     cfg["browser"] = browser
     _save_config(cfg)
-    b = BROWSERS[browser]
-    print(f"✅ Browser set to \033[92m{b['app_name']}\033[0m")
-    print(f"   Engine:    {b['engine']}")
+    print(f"✅ Browser set to \033[92mSafari\033[0m")
     print(f"\n   Saved to {CONFIG_PATH}")
-    print("   All future Submit tasks will use this browser.")
+    print("   All future Submit tasks will use Safari.")
 
 
 def set_template_cmd(args):
@@ -159,7 +155,11 @@ def is_folder_open_in_zed(folder_path):
     """Checks if a Zed process is currently managing this folder path."""
     try:
         output = subprocess.check_output(["ps", "aux"]).decode("utf-8")
-        return str(folder_path) in output and "Zed" in output
+        folder_str = str(folder_path)
+        for line in output.splitlines():
+            if "Zed" in line and folder_str in line:
+                return True
+        return False
     except Exception:
         return False
 
@@ -191,9 +191,15 @@ class CompanionHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length)
-        data = json.loads(body.decode("utf-8"))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+            print(f"[Companion] ❌ Received malformed request: {e}")
+            self.send_response(400)
+            self.end_headers()
+            return
         self.server.foc_process_problem(data)
         self.send_response(200)
         self.end_headers()
@@ -201,9 +207,16 @@ class CompanionHandler(http.server.SimpleHTTPRequestHandler):
 
 def process_problem(data, active_folder):
     problem_name = data.get("name", "problem")
-    safe_filename = problem_name.replace(" ", "_").replace(".", "_", 1)
+    safe_filename = problem_name.replace(" ", "_").replace(".", "_")
     safe_filename = re.sub(r"[^\w_]", "", safe_filename)
-    file_name = f"{safe_filename}.cpp"
+    if not safe_filename:
+        safe_filename = "problem"
+
+    # Determine file extension based on language
+    lang_key = get_saved_lang()
+    ext_map = {"cpp20": ".cpp", "cpp23": ".cpp", "cpp17": ".cpp", "python": ".py", "java": ".java"}
+    file_ext = ext_map.get(lang_key, ".cpp")
+    file_name = f"{safe_filename}{file_ext}"
     file_path = active_folder / file_name
 
     print(f"\n[Companion] Received problem: {problem_name}")
@@ -240,44 +253,53 @@ def process_problem(data, active_folder):
                 except Exception as e:
                     print(f"[Companion] Failed to parse Zed snippets: {e}")
 
-        # Default: read from APP_DIR/boilerplate.cpp
+        # Default: read from APP_DIR/boilerplate.<ext>
         if not content:
-            boilerplate = Path(APP_DIR).expanduser() / "boilerplate.cpp"
-            if boilerplate.exists():
-                try:
-                    content = boilerplate.read_text(encoding="utf-8")
-                except Exception as e:
-                    print(f"[Companion] Failed to read boilerplate: {e}")
+            # Try language-specific boilerplate first, then fallback to .cpp
+            for ext in [file_ext, ".cpp"]:
+                boilerplate = Path(APP_DIR).expanduser() / f"boilerplate{ext}"
+                if boilerplate.exists():
+                    try:
+                        content = boilerplate.read_text(encoding="utf-8")
+                        print(f"[Companion] Using template: {boilerplate.name}")
+                        break
+                    except Exception as e:
+                        print(f"[Companion] Failed to read boilerplate: {e}")
 
         file_path.write_text(content, encoding="utf-8")
 
-    # Tests blocks & Meta extraction
+    # Tests blocks & Meta extraction — use language-appropriate comment syntax
     url = data.get("url", "")
-    tests_str = f"\n\n// URL: {url}\n/* === TEST CASES ===\n"
-    for i, test in enumerate(data.get("tests", [])):
-        tests_str += f"[Case {i + 1}]\n"
-        tests_str += f"Input:\n{test.get('input', '').strip()}\n"
-        tests_str += f"Expected:\n{test.get('output', '').strip()}\n\n"
-    tests_str += "=== END TEST CASES === */\n"
+    time_limit = data.get("timeLimit", 0)  # in ms, from Competitive Companion
+    tl_line = f"TIME_LIMIT: {time_limit}ms\n" if time_limit else ""
+    if lang_key == "python":
+        url_marker = f"# URL: {url}"
+        tests_str = f"\n\n{url_marker}\n\"\"\" === TEST CASES ===\n{tl_line}"
+        for i, test in enumerate(data.get("tests", [])):
+            tests_str += f"[Case {i + 1}]\n"
+            tests_str += f"Input:\n{test.get('input', '').strip()}\n"
+            tests_str += f"Expected:\n{test.get('output', '').strip()}\n\n"
+        tests_str += "=== END TEST CASES === \"\"\"\n"
+    else:
+        url_marker = f"// URL: {url}"
+        tests_str = f"\n\n{url_marker}\n/* === TEST CASES ===\n{tl_line}"
+        for i, test in enumerate(data.get("tests", [])):
+            tests_str += f"[Case {i + 1}]\n"
+            tests_str += f"Input:\n{test.get('input', '').strip()}\n"
+            tests_str += f"Expected:\n{test.get('output', '').strip()}\n\n"
+        tests_str += "=== END TEST CASES === */\n"
 
-    # Append tests to .cpp snippet
+    # Append tests to source file
     original_code = file_path.read_text(encoding="utf-8")
 
-    # Strip old test cases if they exist
-    if "// URL: " in original_code:
-        original_code = re.sub(r"// URL: .*?\n", "", original_code)
-    if "/* === TEST CASES ===" in original_code:
-        original_code = re.sub(
-            r"/\* === TEST CASES ===.*?=== END TEST CASES === \*/\s*",
-            "",
-            original_code,
-            flags=re.DOTALL,
-        )
+    # Strip old test cases if they exist (anchored to end-of-file region)
+    # Remove URL marker line only if it's on its own line (not part of user code)
+    original_code = re.sub(r"\n*(?://|#) URL: https?://\S+\n(?:(?:/\*|\"\"\") === TEST CASES ===.*?=== END TEST CASES === (?:\*/|\"\"\")\s*)", "", original_code, flags=re.DOTALL)
 
     new_code = original_code.rstrip() + tests_str
     file_path.write_text(new_code, encoding="utf-8")
     print(
-        f"[Companion] Saved {len(data.get('tests', []))} tests natively in the .cpp file."
+        f"[Companion] Saved {len(data.get('tests', []))} tests in {file_path.name}"
     )
     print(f"[Companion] Ready in Zed! Open {file_path}")
 
@@ -290,13 +312,43 @@ def force_kill_process_on_port(port):
         return
     command = f"lsof -ti tcp:{port}"
     try:
-        pid = subprocess.check_output(command, shell=True).decode().strip()
-        if pid:
-            print(f"[Listen] Port {port} is in use by PID {pid}. Terminating it...")
-            import signal
+        output = subprocess.check_output(command, shell=True).decode().strip()
+        if not output:
+            return
+        import signal
 
-            os.kill(int(pid), signal.SIGKILL)
-            time.sleep(0.1)  # Give the OS a moment to release the port
+        pids = output.splitlines()
+        for pid_str in pids:
+            pid_str = pid_str.strip()
+            if not pid_str:
+                continue
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+            print(f"[Listen] Port {port} is in use by PID {pid}. Terminating it...")
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue  # Already dead
+            except PermissionError:
+                print(f"[Listen] ⚠️  Cannot kill PID {pid} (permission denied). Try running with sudo.")
+                continue
+        time.sleep(0.3)  # Give the OS a moment to release the port
+
+        # If SIGTERM didn't work, try SIGKILL
+        try:
+            remaining = subprocess.check_output(command, shell=True).decode().strip()
+            for pid_str in remaining.splitlines():
+                pid_str = pid_str.strip()
+                if pid_str:
+                    try:
+                        os.kill(int(pid_str), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, ValueError):
+                        pass
+            time.sleep(0.1)
+        except subprocess.CalledProcessError:
+            pass  # All processes are dead
     except subprocess.CalledProcessError:
         pass  # Port is not in use
 
@@ -353,20 +405,48 @@ def listen_cmd(args):
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
 
     print(f"[Listen] Starting Competitive Companion listener on port {PORT}...")
-    print(f"[Listen] Saving problems natively to: {target_dir}")
+    print(f"[Listen] Saving problems to: {target_dir}")
     print("[Listen] Waiting for requests from browser extension...")
 
     # Pre-create the directory if it doesn't exist
     target_dir.mkdir(parents=True, exist_ok=True)
 
     socketserver.TCPServer.allow_reuse_address = True
-    server = socketserver.TCPServer(("", PORT), CompanionHandler)
+    try:
+        server = socketserver.TCPServer(("", PORT), CompanionHandler)
+    except OSError as e:
+        if "Address already in use" in str(e) or e.errno == 48:
+            print(f"❌ Port {PORT} is still in use after kill attempt.")
+            print(f"   Try: lsof -ti tcp:{PORT} | xargs kill -9")
+            return
+        raise
+
+    problem_count = [0]  # Mutable counter for closure
 
     def handle_problem(data):
+        problem_count[0] += 1
+        problem_name = data.get("name", "problem")
+        time_limit = data.get("timeLimit", 0)
+        tl_str = f" (TL: {time_limit}ms)" if time_limit else ""
+        print(f"\n{'─' * 45}")
         file_path = process_problem(data, target_dir)
         if file_path:
-            import shutil
+            print(f"[Companion] ✅ Problem #{problem_count[0]} ready: {problem_name}{tl_str}")
+            print(f"{'─' * 45}")
 
+            # macOS native notification
+            if sys.platform == "darwin":
+                try:
+                    subprocess.run(
+                        ["osascript", "-e",
+                         f'display notification "Problem #{problem_count[0]}: {problem_name}" '
+                         f'with title "CP Helper" sound name "Glass"'],
+                        capture_output=True, timeout=3
+                    )
+                except Exception:
+                    pass
+
+            import shutil
             zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
             # Handle Zed Logic: Open folder if missing
             if not is_folder_open_in_zed(target_dir):
@@ -381,7 +461,7 @@ def listen_cmd(args):
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[Listen] Server stopped.")
+        print(f"\n[Listen] Server stopped. {problem_count[0]} problem(s) received this session.")
     finally:
         try:
             pid_path.unlink()
@@ -405,10 +485,16 @@ def check_answer(expected_answers, output):
 
 
 def extract_tests_from_code(code):
-    """Parses the block comment to extract test cases"""
+    """Parses the block comment to extract test cases (supports C++/Java and Python syntax)"""
+    # Try C++/Java block comment syntax first
     m = re.search(
         r"/\* === TEST CASES ===(.*?)=== END TEST CASES === \*/", code, re.DOTALL
     )
+    # Try Python triple-quote syntax
+    if not m:
+        m = re.search(
+            r'""" === TEST CASES ===(.*?)=== END TEST CASES === """', code, re.DOTALL
+        )
     if not m:
         return []
 
@@ -434,6 +520,72 @@ def extract_tests_from_code(code):
     return parsed_tests
 
 
+def extract_time_limit_from_code(code):
+    """Extract the problem's time limit (in seconds) from the test block.
+    Falls back to TIME_LIMIT_SEC if not found."""
+    m = re.search(r"TIME_LIMIT:\s*(\d+)ms", code)
+    if m:
+        return int(m.group(1)) / 1000.0
+    return TIME_LIMIT_SEC
+
+
+def _format_wa_diff(expected_str, actual_str):
+    """Format a visual line-by-line diff between expected and actual output.
+    Only colors the exact characters that differ in red."""
+    exp_lines = expected_str.strip().splitlines() if expected_str.strip() else []
+    act_lines = actual_str.strip().splitlines() if actual_str.strip() else []
+    max_lines = max(len(exp_lines), len(act_lines))
+
+    if max_lines == 0:
+        return "  (both empty)"
+
+    def color_diff(exp, act):
+        """Return act string with only differing characters in red."""
+        result = []
+        max_len = max(len(exp), len(act))
+        for i in range(max_len):
+            e = exp[i] if i < len(exp) else None
+            a = act[i] if i < len(act) else None
+            if e == a:
+                result.append(a if a is not None else "")
+            else:
+                if a is not None:
+                    result.append("\033[91m" + a + "\033[0m")
+        return "".join(result)
+
+    # Single line format
+    if max_lines == 1 and len(exp_lines) == 1 and len(act_lines) == 1:
+        exp, act = exp_lines[0], act_lines[0]
+        if exp == act:
+            return "  Expected \u2502 " + exp + "\n  Got      \u2502 " + act
+        colored = color_diff(exp, act)
+        return "  Expected \u2502 " + exp + "\n  Got      \u2502 " + colored + " \u25c4"
+
+    # Multi-line format
+    exp_width = max((len(l) for l in exp_lines), default=8)
+    exp_width = max(exp_width, 8)
+    exp_width = min(exp_width, 40)
+
+    result = []
+    header = "  \033[1m" + "Expected".ljust(exp_width) + " \u2502 Got\033[0m"
+    result.append(header)
+    separator = "  " + ("\u2500" * exp_width) + "\u253c\u2500" + ("\u2500" * exp_width)
+    result.append(separator)
+
+    for i in range(max_lines):
+        exp = exp_lines[i] if i < len(exp_lines) else "(missing)"
+        act = act_lines[i] if i < len(act_lines) else "(missing)"
+        if exp == act:
+            result.append("  " + exp.ljust(exp_width) + " \u2502 " + act)
+        else:
+            colored = color_diff(exp, act)
+            result.append("  " + exp.ljust(exp_width) + " \u2502 " + colored + " \u25c4")
+
+    if len(exp_lines) != len(act_lines):
+        result.append("  \033[91m(" + str(len(exp_lines)) + " lines expected, " + str(len(act_lines)) + " lines received)\033[0m")
+
+    return "\n".join(result)
+
 def compile_and_get_run_cmd(source_file, lang_key):
     """Returns the command list to execute the program, or None on failure."""
     lang = LANGUAGES[lang_key]
@@ -446,9 +598,9 @@ def compile_and_get_run_cmd(source_file, lang_key):
     bin_path = get_binary_path(source_file)
     compile_cmd = lang["compile"] + [str(source_file), "-o", str(bin_path)]
 
-    # Java special case
+    # Java special case: compile with -d to place .class in source directory
     if "run_compiled" in lang:
-        compile_cmd = lang["compile"] + [str(source_file)]
+        compile_cmd = lang["compile"] + ["-d", str(source_file.parent), str(source_file)]
 
     print(f"⚙️  \033[90mCompiling: {' '.join(compile_cmd)}\033[0m")
     t0 = time.time()
@@ -474,26 +626,41 @@ def run_cmd(args):
         return
 
     lang_key = get_saved_lang()
-    print(f"🔧 \033[90mLanguage: {lang_key}\033[0m\n")
-
     code = source_file.read_text(encoding="utf-8")
+
+    # Extract time limit from the test block (falls back to default)
+    tl_sec = extract_time_limit_from_code(code)
+    print(f"🔧 \033[90mLanguage: {lang_key} │ Time Limit: {tl_sec:.1f}s\033[0m\n")
+
     tests = extract_tests_from_code(code)
 
     if not tests:
-        print("⚠️  No tests found. Running binary manually.")
+        print("⚠️  No tests found. Running interactively (Ctrl+D to send EOF, Ctrl+C to stop).")
         run_cmd_list = compile_and_get_run_cmd(source_file, lang_key)
         if run_cmd_list:
-            subprocess.run(run_cmd_list)
+            try:
+                subprocess.run(run_cmd_list, timeout=30)
+            except subprocess.TimeoutExpired:
+                print("\n⏰ Interactive run timed out after 30s.")
+            except KeyboardInterrupt:
+                print("\n⏹️  Stopped.")
         return
 
     run_cmd_list = compile_and_get_run_cmd(source_file, lang_key)
     if not run_cmd_list:
         return
 
-    print(f"🧪 Running {len(tests)} test cases...\n")
+    # Show compact test preview
+    print(f"🧪 Running {len(tests)} test case{'s' if len(tests) != 1 else ''}...")
+    for i, test in enumerate(tests):
+        preview_in = test.get("test", "").split("\n")[0][:40]
+        has_expected = bool(test.get("correct_answers", []))
+        exp_tag = "" if has_expected else " \033[90m(no expected)\033[0m"
+        print(f"   Case {i+1}: \033[90m{preview_in}{'...' if len(test.get('test','')) > 40 else ''}\033[0m{exp_tag}")
+    print()
+
     passed = 0
 
-    # Store results to print a summary
     for i, test in enumerate(tests):
         print(f"--- Case {i + 1} ---")
         test_in = test.get("test", "")
@@ -508,12 +675,12 @@ def run_cmd(args):
                 input=test_in,
                 text=True,
                 capture_output=True,
-                timeout=TIME_LIMIT_SEC,
+                timeout=tl_sec,
             )
             t1 = time.time()
             elapsed_ms = (t1 - t0) * 1000
 
-            # --- ALWAYS FETCH AND DISCLOSE INTERNAL LOGS IMMEDIATELY ---
+            # Show stderr (debug output) immediately
             if proc.stderr and proc.stderr.strip():
                 print(f"\033[93m\033[1m⚠️  Debug Output (stderr):\033[0m")
                 print(f"\033[90m{proc.stderr.strip()}\033[0m\n")
@@ -531,21 +698,22 @@ def run_cmd(args):
                     passed += 1
                 else:
                     print(f"❌ \033[91mWrong Answer\033[0m - {elapsed_ms:.0f}ms")
-                    print("\n\033[1mInput:\033[0m")
+                    print(f"\n\033[1mInput:\033[0m")
                     print(test_in.strip())
-                    print("\n\033[1mExpected Output:\033[0m")
-                    print(test_out_expected[0].strip() if test_out_expected else "")
-                    print("\n\033[1mYour Output:\033[0m")
-                    print(proc.stdout.strip())
+                    print()
+                    expected_str = test_out_expected[0] if test_out_expected else ""
+                    print(_format_wa_diff(expected_str, proc.stdout))
         except subprocess.TimeoutExpired:
             print(
-                f"⏰ \033[93mTime Limit Exceeded\033[0m - >{TIME_LIMIT_SEC * 1000:.0f}ms"
+                f"⏰ \033[93mTime Limit Exceeded\033[0m - >{tl_sec * 1000:.0f}ms"
             )
         print("")
 
     print("=====================================")
     if passed == len(tests):
         print(f"🏆 \033[92mALL {passed}/{len(tests)} CASES PASSED!\033[0m")
+        print(f"\n💡 Ready to submit! Use \033[96mcmd+enter\033[0m or:")
+        print(f"   python3 {Path(APP_DIR).expanduser() / 'main.py'} submit \"{source_file}\"")
     else:
         print(
             f"💥 \033[91mFAILED: {len(tests) - passed}/{len(tests)} cases failed.\033[0m"
@@ -557,26 +725,25 @@ def run_cmd(args):
 
 
 def _strip_test_block(source_code):
-    """Remove embedded test cases and URL comment before submitting."""
+    """Remove embedded test cases and URL comment before submitting.
+    Only strips the URL+test-block combo anchored together, not stray URL comments in user code."""
     code = source_code
-    if "// URL: " in code:
-        code = re.sub(r"// URL: .*?\n", "", code)
-    if "/* === TEST CASES ===" in code:
-        code = re.sub(
-            r"/\* === TEST CASES ===.*?=== END TEST CASES === \*/\s*",
-            "",
-            code,
-            flags=re.DOTALL,
-        )
+    # Strip the URL line + test block as a combined unit (anchored together)
+    code = re.sub(
+        r"\n*(?://|#) URL: https?://\S+\n(?:(?:/\*|\"\"\") === TEST CASES ===.*?=== END TEST CASES === (?:\*/|\"\"\")\s*)",
+        "",
+        code,
+        flags=re.DOTALL,
+    )
     return code.rstrip() + "\n"
 
 
 def _detect_platform(url):
     """Detect platform and extract submit_url + problem_code from a problem URL."""
 
-    # Codeforces: contest/gym/group
+    # Codeforces: contest/gym/group (supports subdomains like m.codeforces.com)
     m = re.search(
-        r"(https?://codeforces\.com/.*(?:contest|gym)/\d+)/problem/(\w+)", url
+        r"(https?://(?:\w+\.)?codeforces\.com/.*(?:contest|gym)/\d+)/problem/(\w+)", url
     )
     if m:
         return {
@@ -586,7 +753,7 @@ def _detect_platform(url):
         }
 
     # Codeforces: problemset
-    m = re.search(r"(https?://codeforces\.com/problemset)/problem/(\d+)/(\w+)", url)
+    m = re.search(r"(https?://(?:\w+\.)?codeforces\.com/problemset)/problem/(\d+)/(\w+)", url)
     if m:
         return {
             "platform": "codeforces",
@@ -859,6 +1026,9 @@ def _run_applescript(applescript, fill_js, result_js=None):
 def _build_applescript_webkit(app_name, submit_url, ready_selector):
     """Build AppleScript for WebKit-based browsers (Safari, Orion).
     Uses 'do JavaScript ... in <tab>' syntax."""
+    # Escape double quotes in ready_selector for AppleScript strings
+    # AppleScript needs literal \" to represent a quote inside a string
+    safe_selector = ready_selector.replace('"', '\\"')
     return f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
 tell application "{app_name}"
     if (count of windows) is 0 then make new document with properties {{URL:"about:blank"}}
@@ -871,7 +1041,7 @@ tell application "{app_name}"
                 var isC = false;
                 if(document.title.indexOf('Just a moment')>-1 || document.title.indexOf('Attention Required')>-1) isC=true;
                 if(isC) return 'CAPTCHA';
-                if(document.querySelector('{ready_selector}')) return 'READY';
+                if(document.querySelector('{safe_selector}')) return 'READY';
                 return 'WAITING';
             }})()" in submitTab
             if pageCheck is "READY" then exit repeat
@@ -931,112 +1101,21 @@ tell application frontAppName to activate
 return resultInfo"""
 
 
-def _build_applescript_chromium(app_name, submit_url, ready_selector):
-    """Build AppleScript for Chromium-based browsers (Chrome, Brave).
-    Uses 'execute javascript ... in active tab of window 1' syntax."""
-    return f"""tell application "System Events" to set frontAppName to name of first application process whose frontmost is true
-tell application "{app_name}"
-    if (count of windows) is 0 then make new window
-    tell window 1 to set submitTab to make new tab with properties {{URL:"{submit_url}"}}
-    set captchaAlerted to false
-    repeat 120 times
-        delay 2
-        try
-            tell submitTab
-                set pageCheck to execute javascript "(function(){{
-                    var isC = false;
-                    if(document.title.indexOf('Just a moment')>-1 || document.title.indexOf('Attention Required')>-1) isC=true;
-                    if(isC) return 'CAPTCHA';
-                    if(document.querySelector('{ready_selector}')) return 'READY';
-                    return 'WAITING';
-                }})()"
-            end tell
-            if pageCheck is "READY" then exit repeat
-            if pageCheck is "CAPTCHA" then
-                if captchaAlerted is false then
-                    set captchaAlerted to true
-                    tell application "{app_name}" to activate
-                    log "CAPTCHA: Please solve the CAPTCHA in {app_name}..."
-                end if
-            end if
-        on error errMsg
-            if errMsg contains "not allowed" then return "ERROR: Enable 'Allow JavaScript from Apple Events' in {app_name} (View > Developer)"
-        end try
-    end repeat
-    delay 0.5
-    set fillJS to read POSIX file "__FILL_JS_PATH__"
-    tell submitTab
-        set submitResult to execute javascript fillJS
-    end tell
-    if submitResult does not start with "SUBMITTED" then return submitResult
-    delay 4
-    set resultJS to read POSIX file "__RESULT_JS_PATH__"
-    set resultInfo to "UNKNOWN: Timed out"
-    set resCaptchaAlerted to false
-    repeat 120 times
-        try
-            tell submitTab
-                set resultInfo to execute javascript resultJS
-            end tell
-        on error
-            set resultInfo to "WAIT"
-        end try
-
-        if resultInfo is "CAPTCHA" then
-            if resCaptchaAlerted is false then
-                set resCaptchaAlerted to true
-                tell application "{app_name}" to activate
-            end if
-            log "CAPTCHA: Waiting for you to solve and resubmit..."
-        else
-            log resultInfo
-        end if
-
-        if resultInfo starts with "RESULT:" or resultInfo starts with "REJECTED:" then exit repeat
-        if resultInfo starts with "RELOAD:" then
-            tell submitTab
-                execute javascript "window.location.reload()"
-            end tell
-            delay 1
-            repeat 30 times
-                delay 1
-                try
-                    tell submitTab
-                        set rs to execute javascript "document.readyState"
-                    end tell
-                    if rs is "complete" then exit repeat
-                end try
-            end repeat
-        else
-            delay 2
-        end if
-    end repeat
-    delay 0.5
-    try
-        close submitTab
-    end try
-end tell
-tell application frontAppName to activate
-return resultInfo"""
-
-
-def _check_browser_available(browser_key):
-    """Check if the selected browser is installed on macOS."""
-    b = BROWSERS[browser_key]
-    app_name = b["app_name"]
+def _check_browser_available(browser_key=None):
+    """Check if Safari is installed on macOS."""
     try:
         result = subprocess.run(
             ["osascript", "-e", f'tell application "System Events" to get name of every process whose background only is false'],
             capture_output=True, text=True, timeout=5
         )
-        if app_name in result.stdout:
+        if "Safari" in result.stdout:
             return True
-        # Check if app exists in /Applications
-        app_path = f"/Applications/{app_name}.app"
+        # Check if Safari exists in /Applications
+        app_path = "/Applications/Safari.app"
         if Path(app_path).exists():
             return True
-        print(f"❌ Browser '{app_name}' is not installed.")
-        print(f"   Install it or switch with: python3 main.py set_browser safari")
+        print(f"❌ Safari is not installed.")
+        print(f"   Silent submission only works with Safari.")
         return False
     except Exception:
         return True  # Assume available if we can't check
@@ -1044,30 +1123,16 @@ def _check_browser_available(browser_key):
 
 # ======================== Submit Dispatchers ========================
 
-def _submit_applescript(submit_url, fill_js, result_js, browser_key, ready_selector):
-    """Submit via AppleScript (Safari, Chrome, Brave, Orion)."""
-    b = BROWSERS[browser_key]
-    app_name = b["app_name"]
-    engine = b["engine"]
-
-    if engine == "webkit":
-        applescript = _build_applescript_webkit(app_name, submit_url, ready_selector)
-    elif engine == "chromium":
-        applescript = _build_applescript_chromium(app_name, submit_url, ready_selector)
-    else:
-        print(f"❌ Unknown engine type: {engine}")
-        return "ERROR: Unknown browser engine"
-
+def _submit_applescript(submit_url, fill_js, result_js, ready_selector):
+    """Submit via Safari AppleScript."""
+    app_name = "Safari"
+    applescript = _build_applescript_webkit(app_name, submit_url, ready_selector)
     return _run_applescript(applescript, fill_js, result_js)
 
 
-def _do_submit(submit_url, fill_js, result_js, platform, browser_key, ready_selector):
-    """Route submission to the correct browser engine."""
-    b = BROWSERS[browser_key]
-    if b["type"] == "applescript":
-        return _submit_applescript(submit_url, fill_js, result_js, browser_key, ready_selector)
-    else:
-        return "ERROR: Unknown browser type"
+def _do_submit(submit_url, fill_js, result_js, platform, ready_selector):
+    """Submit via Safari."""
+    return _submit_applescript(submit_url, fill_js, result_js, ready_selector)
 
 
 # ======================== Main Submit Command ========================
@@ -1079,9 +1144,10 @@ def submit_cmd(args):
         return
 
     source_code = source_file.read_text(encoding="utf-8")
-    m_url = re.search(r"// URL: (https?://\S+)", source_code)
+    # Support both C++/Java style (// URL:) and Python style (# URL:)
+    m_url = re.search(r"(?://|#) URL: (https?://\S+)", source_code)
     if not m_url:
-        print(f"❌ Error: No // URL: comment found in the file.")
+        print(f"❌ Error: No URL comment found in the file (expected '// URL: ...' or '# URL: ...').")
         return
 
     url = m_url.group(1)
@@ -1108,41 +1174,49 @@ def submit_cmd(args):
         print(f"❌ Unknown platform: {platform}")
         return
 
-    # Browser info
-    browser_key = get_saved_browser()
-    browser_name = BROWSERS[browser_key]["app_name"]
-
     print(f"🚀 \033[94mSubmitting {source_file.name}...\033[0m")
     print(f"   Platform: {platform}")
     print(f"   Problem:  {problem_code}")
     print(f"   URL:      {submit_url}")
     print(f"   Lang:     {lang_name} ({lang_id})")
-    print(f"   Browser:  {browser_name}")
+    print(f"   Browser:  Safari")
 
-    # Check browser availability
-    if not _check_browser_available(browser_key):
+    # Check Safari availability
+    if not _check_browser_available("safari"):
         return
 
-    # Confirmation
-    print()
-    sys.stdout.write("\033[93m⚠️  Press Enter to submit, Backspace to cancel: \033[0m")
-    sys.stdout.flush()
-    import termios
-    import tty
+    # Confirmation (skip with --yes flag)
+    if not args.yes:
+        print()
+        try:
+            import termios
+            import tty
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        ch = sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-    print()
-    if ch in ("\x7f", "\x08", "\x1b"):
-        print("❌ Submission cancelled.")
-        return
+            sys.stdout.write("\033[93m⚠️  Press Enter to submit, Backspace to cancel: \033[0m")
+            sys.stdout.flush()
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                ch = sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            print()
+            if ch in ("\x7f", "\x08", "\x1b"):
+                print("❌ Submission cancelled.")
+                return
+        except (ImportError, OSError, io.UnsupportedOperation):
+            # Non-TTY environment (e.g., piped input, IDE task runner)
+            try:
+                confirm = input("\033[93m⚠️  Type 'yes' to submit, anything else to cancel: \033[0m").strip().lower()
+            except EOFError:
+                print("❌ Submission cancelled (no interactive input available).")
+                return
+            if confirm != "yes":
+                print("❌ Submission cancelled.")
+                return
 
-    print(f"\n\033[93m{browser_name} will handle the submission.\033[0m")
+    print(f"\n\033[93mSafari will handle the submission.\033[0m")
 
     # Build JS and ready selector
     if platform == "codeforces":
@@ -1155,22 +1229,25 @@ def submit_cmd(args):
         ready_selector = 'select[name="data.TaskScreenName"]'
 
     # Submit
-    res = _do_submit(submit_url, fill_js, result_js, platform, browser_key, ready_selector)
+    res = _do_submit(submit_url, fill_js, result_js, platform, ready_selector)
 
     # Print verdict
     print("\n==============================")
-    v = res.lower()
-    if res.startswith("RESULT:"):
-        if "accepted" in v or ": ac" in v:
-            print(f"\u2705 \033[92m{res}\033[0m")
-        elif any(x in v for x in ["wrong", "time limit", "memory limit", "runtime error", "compilation error", ": wa", ": tle", ": mle", ": re", ": ce"]):
+    if not res:
+        print("\u26a0\ufe0f  \033[93mNo response from browser. Safari may have been closed or the tab crashed.\033[0m")
+    else:
+        v = res.lower()
+        if res.startswith("RESULT:"):
+            if "accepted" in v or ": ac" in v:
+                print(f"\u2705 \033[92m{res}\033[0m")
+            elif any(x in v for x in ["wrong", "time limit", "memory limit", "runtime error", "compilation error", ": wa", ": tle", ": mle", ": re", ": ce"]):
+                print(f"\u274c \033[91m{res}\033[0m")
+            else:
+                print(f"\u26a0\ufe0f  \033[93m{res}\033[0m")
+        elif "REJECTED" in res or "ERROR" in res:
             print(f"\u274c \033[91m{res}\033[0m")
         else:
-            print(f"\u26a0\ufe0f  \033[93m{res}\033[0m")
-    elif "REJECTED" in res or "ERROR" in res:
-        print(f"\u274c \033[91m{res}\033[0m")
-    else:
-        print(f"\u26a0\ufe0f  {res}")
+            print(f"\u26a0\ufe0f  {res}")
     print("==============================")
 
 
@@ -1188,6 +1265,9 @@ def status_cmd(args):
         except (ValueError, ProcessLookupError):
             print("❌ No listener is running (stale PID file)")
             pid_path.unlink(missing_ok=True)
+        except PermissionError:
+            print(f"⚠️  PID {pid} exists but belongs to another user. Stale PID file?")
+            pid_path.unlink(missing_ok=True)
     else:
         print("❌ No listener is running.")
 
@@ -1199,8 +1279,115 @@ def status_cmd(args):
     template_name = "boilerplate.cpp" if template == "boilerplate" else "Zed snippets (cpp.json)"
     print(f"\n📋 Config ({CONFIG_PATH}):")
     print(f"   Language:  {lang}")
-    print(f"   Browser:   {browser} ({BROWSERS.get(browser, {}).get('app_name', '?')})")
+    print(f"   Browser:   {browser}")
     print(f"   Template:  {template_name}")
+
+
+# ======================== Add Test Command ========================
+
+def _read_multiline(prompt):
+    """Read multi-line input from the user. Empty line (double Enter) to finish."""
+    print(prompt)
+    lines = []
+    try:
+        while True:
+            line = input()
+            if line == "" and lines:  # Empty line after content = done
+                break
+            if line == "" and not lines:
+                break  # Immediate Enter = empty input
+            lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        pass
+    return "\n".join(lines)
+
+
+def add_test_cmd(args):
+    """Add a custom test case to a source file interactively."""
+    source_file = Path(args.file).resolve()
+    if not source_file.exists():
+        print(f"❌ Error: File {source_file} not found.")
+        return
+
+    code = source_file.read_text(encoding="utf-8")
+
+    # Detect comment style from file extension
+    is_python = source_file.suffix == ".py"
+
+    # Count existing cases
+    existing_cases = re.findall(r"\[Case \d+\]", code)
+    next_case_num = len(existing_cases) + 1
+
+    print(f"\n📝 Adding custom test case to \033[96m{source_file.name}\033[0m")
+    if existing_cases:
+        print(f"   ({len(existing_cases)} existing case{'s' if len(existing_cases) != 1 else ''} found)")
+    print()
+
+    # Read input
+    test_input = _read_multiline("\033[1mEnter input\033[0m (empty line to finish):")
+    if not test_input:
+        print("\n⚠️  Empty input provided. Adding test with empty input.")
+
+    # Read expected output
+    test_output = _read_multiline("\n\033[1mEnter expected output\033[0m (empty line to finish, or Enter immediately to skip):")
+
+    # Build the new case block
+    new_case = f"[Case {next_case_num}]\n"
+    new_case += f"Input:\n{test_input}\n"
+    new_case += f"Expected:\n{test_output}\n\n"
+
+    # Check if test block exists
+    has_cpp_block = "/* === TEST CASES ===" in code
+    has_py_block = '""" === TEST CASES ===' in code
+
+    if has_cpp_block:
+        code = code.replace(
+            "=== END TEST CASES === */",
+            f"{new_case}=== END TEST CASES === */"
+        )
+    elif has_py_block:
+        code = code.replace(
+            '=== END TEST CASES === """',
+            f'{new_case}=== END TEST CASES === """'
+        )
+    else:
+        # No test block exists — create one
+        if is_python:
+            block = f'\n\n""" === TEST CASES ===\n{new_case}=== END TEST CASES === """\n'
+        else:
+            block = f'\n\n/* === TEST CASES ===\n{new_case}=== END TEST CASES === */\n'
+        code = code.rstrip() + block
+
+    source_file.write_text(code, encoding="utf-8")
+
+    if test_output:
+        label = test_output[:50] + ('...' if len(test_output) > 50 else '')
+        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m to {source_file.name} (expected: {label})")
+    else:
+        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m to {source_file.name} (no expected output — will show your output)")
+
+
+# ======================== Open Command ========================
+
+def open_cmd(args):
+    """Open the problem URL from the source file in the default browser."""
+    source_file = Path(args.file).resolve()
+    if not source_file.exists():
+        print(f"❌ Error: File {source_file} not found.")
+        return
+
+    code = source_file.read_text(encoding="utf-8")
+    m = re.search(r"(?://|#) URL: (https?://\S+)", code)
+    if not m:
+        print("❌ No problem URL found in the file.")
+        print("   URL is embedded by the listener when parsing a problem.")
+        return
+
+    url = m.group(1)
+    print(f"🌐 Opening: {url}")
+
+    import webbrowser
+    webbrowser.open(url)
 
 
 # ======================== Main ========================
@@ -1219,19 +1406,28 @@ def main():
 
     # Run
     run_parser = subparsers.add_parser("run", help="Compile and run tests")
-    run_parser.add_argument("file", help="Source code file (.cpp)")
+    run_parser.add_argument("file", help="Source code file")
 
     # Submit
     submit_parser = subparsers.add_parser("submit", help="Submit to Codeforces / AtCoder")
-    submit_parser.add_argument("file", help="Source code file (.cpp)")
+    submit_parser.add_argument("file", help="Source code file")
+    submit_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+
+    # Add Test
+    add_test_parser = subparsers.add_parser("add_test", help="Add a custom test case interactively")
+    add_test_parser.add_argument("file", help="Source code file")
+
+    # Open
+    open_parser = subparsers.add_parser("open", help="Open problem URL in browser")
+    open_parser.add_argument("file", help="Source code file")
 
     # Set Language
-    lang_parser = subparsers.add_parser("set_lang", help="Set C++ standard for run/submit")
-    lang_parser.add_argument("lang", choices=LANGUAGES.keys(), help="C++ standard to use")
+    lang_parser = subparsers.add_parser("set_lang", help="Set language for run/submit")
+    lang_parser.add_argument("lang", choices=LANGUAGES.keys(), help="Language to use")
 
     # Set Browser
     browser_parser = subparsers.add_parser("set_browser", help="Set browser for submissions")
-    browser_parser.add_argument("browser", choices=BROWSERS.keys(), help="Browser to use")
+    browser_parser.add_argument("browser", help="Browser (only 'safari' supported)")
 
     # Set Template
     template_parser = subparsers.add_parser("set_template", help="Set template source (boilerplate.cpp or Zed snippets)")
@@ -1248,6 +1444,10 @@ def main():
         run_cmd(args)
     elif args.command == "submit":
         submit_cmd(args)
+    elif args.command == "add_test":
+        add_test_cmd(args)
+    elif args.command == "open":
+        open_cmd(args)
     elif args.command == "set_lang":
         set_lang_cmd(args)
     elif args.command == "set_browser":
