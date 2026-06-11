@@ -84,6 +84,12 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following 4 ta
     "allow_concurrent_runs": false
   },
   {
+    "label": "CP: Set Template [Boilerplate]",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py set_template boilerplate",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false
+  },
+  {
     "label": "CP: Status",
     "command": "python3 ~/.vc-zed-cp-helper/main.py status",
     "use_new_terminal": false,
@@ -117,7 +123,7 @@ At the start of your programming session, open Zed and launch the **CP: Start Li
 
 Click the green `+` on the Competitive Companion extension in your browser when viewing a Codeforces or AtCoder problem. Zed will automatically open the generated source file.
 
-### 2. Set Language / Browser
+### 2. Set Language / Browser / Template
 You only have to do this once. Run the **CP: Set Language [cpp20]** task. 
 *(You can press `TAB` before hitting enter to modify it to `cpp23`, `python`, `java`, etc.)*
 This saves the active language inside `~/.vc-zed-cp-helper/config.json`. Every "Run" or "Submit" task will use this language.
@@ -126,6 +132,14 @@ Similarly, run **CP: Set Browser [Safari]** (or Brave) to choose which browser h
 *(Note: Ensure you put quotes around the browser name in your `tasks.json` file if your browser name contains spaces! Example: `'Brave Browser'`).*
 
 Available browsers: `safari`, `brave`, `chrome`, `orion`
+
+#### Template Source
+By default, the tool reads your template from `~/.vc-zed-cp-helper/boilerplate.cpp`. You can change this to read from Zed's snippet system instead:
+
+```bash
+python3 ~/.vc-zed-cp-helper/main.py set_template zed_cpp_json  # Use Zed's cpp.json
+python3 ~/.vc-zed-cp-helper/main.py set_template boilerplate   # Use boilerplate.cpp (default)
+```
 
 ### 3. Testing 
 Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and run **CP: Run Tests**. The script compiles the code dynamically and tests every embedded sample case.
@@ -146,3 +160,49 @@ If the automation hits a CAPTCHA wall:
 
 ## Supporting New Languages
 To modify compiler flags or add custom languages (e.g. Rust), just edit the `LANGUAGES` mapping inside `main.py`. You'll need the `cf_id` (Codeforces Language ID) or `ac_id` (AtCoder Language ID) depending on the platform.
+
+---
+
+## Keeping Templates in Sync Across IDEs (Zed + VS Code)
+
+If you use both **Zed** (with this tool) and **VS Code** (with CPH or similar), you can keep your template consistent across both IDEs by using a symlink.
+
+### The Idea
+Instead of maintaining two separate template files, make one IDE point to the other's file. Edit in either IDE — changes persist in both.
+
+### How to Set Up
+
+**Option A: Make Zed use VS Code's `cpp.json`**
+
+```bash
+# 1. Backup Zed's current snippets
+cp ~/.config/zed/snippets/c++.json ~/.config/zed/snippets/c++.json.bak
+
+# 2. Replace Zed's cpp.json with a symlink to VS Code's cpp.json
+ln -sf ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/.config/zed/snippets/c++.json
+
+# 3. Tell this tool to read from Zed snippets
+python3 ~/.vc-zed-cp-helper/main.py set_template zed_snippets
+```
+
+Now edit `cpp.json` in either Zed or VS Code — both see the same file.
+
+**Option B: Make VS Code use Zed's `c++.json`**
+
+```bash
+# 1. Backup VS Code's current snippets
+cp ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/Library/Application\ Support/Code/User/snippets/cpp.json.bak
+
+# 2. Replace VS Code's cpp.json with a symlink to Zed's c++.json
+ln -sf ~/.config/zed/snippets/c++.json ~/Library/Application\ Support/Code/User/snippets/cpp.json
+```
+
+### Which Snippet to Use as Template?
+
+When using `set_template zed_snippets`, the tool looks for a snippet in this order:
+1. A snippet named `CP Template`
+2. A snippet named `C++ Boilerplate`
+3. A snippet named `Boilerplate`
+4. The first snippet in the file
+
+Make sure your main boilerplate template has one of these names in your `cpp.json`.

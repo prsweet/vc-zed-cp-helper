@@ -58,6 +58,7 @@ LANGUAGES = {
 DEFAULT_LANG = "cpp23"
 CONFIG_PATH = Path(APP_DIR).expanduser() / "config.json"
 DEFAULT_BROWSER = "safari"
+DEFAULT_TEMPLATE = "boilerplate"  # "boilerplate" or "zed_snippets"
 
 # Browser profiles: app_name, engine (webkit/chromium), type (applescript)
 BROWSERS = {
@@ -135,6 +136,25 @@ def set_browser_cmd(args):
     print("   All future Submit tasks will use this browser.")
 
 
+def set_template_cmd(args):
+    """Save the template source to config."""
+    template = args.template
+    if template not in ("boilerplate", "zed_snippets"):
+        print(f"❌ Unknown template source '{template}'. Use 'boilerplate' or 'zed_snippets'.")
+        return
+    cfg = _load_config()
+    cfg["template"] = template
+    _save_config(cfg)
+
+    if template == "boilerplate":
+        print(f"✅ Template source set to \033[92mboilerplate.cpp\033[0m")
+        print(f"   Reading from: {Path(APP_DIR).expanduser() / 'boilerplate.cpp'}")
+    else:
+        print(f"✅ Template source set to \033[92mZed snippets\033[0m")
+        print(f"   Reading from: ~/.config/zed/snippets/c++.json")
+    print(f"\n   Saved to {CONFIG_PATH}")
+
+
 def is_folder_open_in_zed(folder_path):
     """Checks if a Zed process is currently managing this folder path."""
     try:
@@ -192,13 +212,43 @@ def process_problem(data, active_folder):
     # Write template if file doesn't exist
     if not file_path.exists():
         content = ""
-        # Try APP_DIR/boilerplate.cpp first
-        boilerplate = Path(APP_DIR).expanduser() / "boilerplate.cpp"
-        if boilerplate.exists():
-            try:
-                content = boilerplate.read_text(encoding="utf-8")
-            except Exception as e:
-                print(f"[Companion] Failed to read boilerplate: {e}")
+        cfg = _load_config()
+        template_source = cfg.get("template", DEFAULT_TEMPLATE)
+
+        if template_source == "zed_snippets":
+            # Read from Zed's cpp.json snippets (useful for multi-IDE sync via symlink)
+            zed_snippets = Path("~/.config/zed/snippets/c++.json").expanduser()
+            if zed_snippets.exists():
+                try:
+                    snippet_data = json.loads(zed_snippets.read_text(encoding="utf-8"))
+                    # Look for a snippet named "CP Template" or "C++ Boilerplate" or first snippet
+                    template_key = None
+                    for key in ["CP Template", "C++ Boilerplate", "Boilerplate"]:
+                        if key in snippet_data:
+                            template_key = key
+                            break
+                    if not template_key and snippet_data:
+                        template_key = list(snippet_data.keys())[0]
+
+                    if template_key:
+                        body = snippet_data[template_key].get("body", [])
+                        content = "\n".join(body) if isinstance(body, list) else body
+                        # Strip snippet placeholders like $1, ${2:default}
+                        content = re.sub(r"\$\d+", "", content)
+                        content = re.sub(r"\$\{\d+(:.*?)?\}", "", content)
+                        print(f"[Companion] Using Zed snippet: {template_key}")
+                except Exception as e:
+                    print(f"[Companion] Failed to parse Zed snippets: {e}")
+
+        # Default: read from APP_DIR/boilerplate.cpp
+        if not content:
+            boilerplate = Path(APP_DIR).expanduser() / "boilerplate.cpp"
+            if boilerplate.exists():
+                try:
+                    content = boilerplate.read_text(encoding="utf-8")
+                except Exception as e:
+                    print(f"[Companion] Failed to read boilerplate: {e}")
+
         file_path.write_text(content, encoding="utf-8")
 
     # Tests blocks & Meta extraction
@@ -1145,9 +1195,12 @@ def status_cmd(args):
     cfg = _load_config()
     lang = cfg.get("lang", DEFAULT_LANG)
     browser = cfg.get("browser", DEFAULT_BROWSER)
+    template = cfg.get("template", DEFAULT_TEMPLATE)
+    template_name = "boilerplate.cpp" if template == "boilerplate" else "Zed snippets (cpp.json)"
     print(f"\n📋 Config ({CONFIG_PATH}):")
-    print(f"   Language: {lang}")
-    print(f"   Browser:  {browser} ({BROWSERS.get(browser, {}).get('app_name', '?')})")
+    print(f"   Language:  {lang}")
+    print(f"   Browser:   {browser} ({BROWSERS.get(browser, {}).get('app_name', '?')})")
+    print(f"   Template:  {template_name}")
 
 
 # ======================== Main ========================
@@ -1180,6 +1233,10 @@ def main():
     browser_parser = subparsers.add_parser("set_browser", help="Set browser for submissions")
     browser_parser.add_argument("browser", choices=BROWSERS.keys(), help="Browser to use")
 
+    # Set Template
+    template_parser = subparsers.add_parser("set_template", help="Set template source (boilerplate.cpp or Zed snippets)")
+    template_parser.add_argument("template", choices=["boilerplate", "zed_snippets"], help="Template source")
+
     # Status
     subparsers.add_parser("status", help="Check listener status and current config")
 
@@ -1195,6 +1252,8 @@ def main():
         set_lang_cmd(args)
     elif args.command == "set_browser":
         set_browser_cmd(args)
+    elif args.command == "set_template":
+        set_template_cmd(args)
     elif args.command == "status":
         status_cmd(args)
 
