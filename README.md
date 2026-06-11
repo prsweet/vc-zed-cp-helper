@@ -2,14 +2,14 @@
 
 A fully automated, native background tool for managing competitive programming workflows seamlessly in the [Zed](https://zed.dev/) editor on macOS.
 
-This tool runs entirely locally as a Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with problem-specific template and test cases, allows you to instantly compile and run tests in Zed, and even fully automates submissions to Codeforces and AtCoder using Safari.
+This tool runs entirely locally as a Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with problem-specific template and test cases, allows you to instantly compile and run tests in Zed, and even fully automates submissions to Codeforces and AtCoder using your chosen browser.
 
 ## Features
 
 - 📥 **Auto-Parses Problems**: Captures problem requirements and sample test cases via Competitive Companion.
 - 🏗️ **Native C++ Template Injection**: Injects test cases directly into block comments at the bottom of the `.cpp` file (no multiple `.in`/`.out` files).
 - 🚀 **Auto-Run Test Cases**: Compiles and runs all embedded test cases locally with precise execution time per case.
-- 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
+- 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating your browser.
 - 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
 - 🧱 **No WASM/Sandboxing Limits**: Standard Zed CP extensions have network/sandbox limits. This native approach has zero limits.
 
@@ -18,9 +18,9 @@ This tool runs entirely locally as a Python script. It intercepts problem data f
 - **macOS** (Relies on AppleScript to interact with browsers)
 - **Python 3.8+**
 - **A supported browser** with **"Allow JavaScript from Apple Events"** enabled:
-  - **Safari**: Safari -> Preferences -> Advanced -> Check "Show Develop menu". Then Develop -> Allow JavaScript from Apple Events.
-  - **Brave**: View -> Developer -> Allow JavaScript from Apple Events
-  - **Chrome**: View -> Developer -> Allow JavaScript from Apple Events
+  - **Safari**: Safari → Preferences → Advanced → Check "Show Develop menu". Then Develop → Allow JavaScript from Apple Events.
+  - **Brave**: View → Developer → Allow JavaScript from Apple Events
+  - **Chrome**: View → Developer → Allow JavaScript from Apple Events
   - **Orion**: Similar to Safari (WebKit-based)
 - **[Zed Code Editor](https://zed.dev/)**
 - **C++ Compiler** (e.g., `g++` installed via Homebrew)
@@ -41,11 +41,11 @@ cd ~ && git clone https://github.com/prsweet/vc-zed-cp-helper.git .vc-zed-cp-hel
 Put your default `C++` (or Python/Java) template inside the app directory at `~/.vc-zed-cp-helper/boilerplate.cpp` (or whatever custom `APP_DIR` you set). If this file doesn't exist, it will just leave your new files empty before injecting tests.
 
 ### 3. Setup Zed Tasks
-Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following 4 tasks with your `APP_DIR` to integrate smoothly with Zed's task runner (`cmd+shift+R`):
+Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following tasks with your `APP_DIR` to integrate smoothly with Zed's task runner (`cmd+shift+R`):
 
 ```json
+// if you changed to the custom directory, change the directory to main.py in all tasks accordingly
 [
-  // if you changed to the custom directory, change the directory to main.py in all tasks accordingly
   {
     "label": "CP: Start Listener (Current Folder)",
     "command": "python3 ~/.vc-zed-cp-helper/main.py listen",
@@ -66,26 +66,14 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following 4 ta
     "allow_concurrent_runs": false
   },
   {
-    "label": "CP: Set Language [cpp20]",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py set_lang cpp20",
+    "label": "CP: Set Language [cpp23]",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py set_lang cpp23",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
   },
   {
-    "label": "CP: Set Browser [Safari]",
+    "label": "CP: Set Browser [safari]",
     "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser safari",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false
-  },
-  {
-    "label": "CP: Set Browser [Brave]",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py set_browser brave",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false
-  },
-  {
-    "label": "CP: Set Template [Boilerplate]",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py set_template boilerplate",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
   },
@@ -104,7 +92,7 @@ Below is a basic keymap. You can add these to your (`~/.config/zed/keymap.json`)
 ```json
 [
   {
-    "context": "Workspace",
+    "context": "Editor",
     "bindings": {
       "cmd-'": ["task::Spawn", { "task_name": "CP: Run Tests" }],
       "cmd-enter": ["task::Spawn", { "task_name": "CP: Submit to Codeforces / AtCoder" }],
@@ -113,33 +101,24 @@ Below is a basic keymap. You can add these to your (`~/.config/zed/keymap.json`)
   }
 ]
 ```
+
 ---
 
 ## Usage
 
 ### 1. Starting the Listener
-At the start of your programming session, open Zed and launch the **CP: Start Listener** task.
-*Alternatively, run `python3 ~/.vc-zed-cp-helper/main.py listen` in any terminal.*
+At the start of your programming session, open Zed and launch the **CP: Start Listener (Current Folder)** task.
 
 Click the green `+` on the Competitive Companion extension in your browser when viewing a Codeforces or AtCoder problem. Zed will automatically open the generated source file.
 
-### 2. Set Language / Browser / Template
-You only have to do this once. Run the **CP: Set Language [cpp20]** task. 
-*(You can press `TAB` before hitting enter to modify it to `cpp23`, `python`, `java`, etc.)*
+### 2. Set Language / Browser
+You only have to do this once. Run the **CP: Set Language [cpp23]** task. 
+*(You can press `TAB` before hitting enter to modify it to `cpp20`, `cpp17`, `python`, `java`, etc.)*
 This saves the active language inside `~/.vc-zed-cp-helper/config.json`. Every "Run" or "Submit" task will use this language.
 
-Similarly, run **CP: Set Browser [Safari]** (or Brave) to choose which browser handles submissions. 
-*(Note: Ensure you put quotes around the browser name in your `tasks.json` file if your browser name contains spaces! Example: `'Brave Browser'`).*
+Similarly, run **CP: Set Browser [safari]** (or brave) to choose which browser handles submissions.
 
 Available browsers: `safari`, `brave`, `chrome`, `orion`
-
-#### Template Source
-By default, the tool reads your template from `~/.vc-zed-cp-helper/boilerplate.cpp`. You can change this to read from Zed's snippet system instead:
-
-```bash
-python3 ~/.vc-zed-cp-helper/main.py set_template zed_cpp_json  # Use Zed's cpp.json
-python3 ~/.vc-zed-cp-helper/main.py set_template boilerplate   # Use boilerplate.cpp (default)
-```
 
 ### 3. Testing 
 Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and run **CP: Run Tests**. The script compiles the code dynamically and tests every embedded sample case.
@@ -147,15 +126,15 @@ Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and
 ### 4. Direct Submissions
 Run the **CP: Submit to Codeforces / AtCoder** task. 
 - It strips out the embedded test case blocks from the bottom.
-- Opens Safari invisibly, finds the Codeforces/AtCoder judge, sets the code, sets your selected language, and safely submits.
+- Opens your chosen browser invisibly, finds the Codeforces/AtCoder judge, sets the code, sets your selected language, and safely submits.
 - **For Codeforces:** It tracks the submission live and prints `WJ`, `Running on test 5`, until eventually showing `✅ ACCEPTED` or `❌ WRONG ANSWER` directly in Zed's terminal.
-- **For AtCoder:** Validates the submission and handles Captchas via Safari forwarding if required.
+- **For AtCoder:** Validates the submission and handles Captchas via browser forwarding if required.
 
 ## Dealing with CAPTCHAs
 Platforms like AtCoder, and occasionally Codeforces (via Cloudflare), heavily use invisible CAPTCHAs.
 If the automation hits a CAPTCHA wall:
-1. The terminal output will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in Safari`.
-2. Safari will be brought to the foreground automatically on the submit page.
+1. The terminal output will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in [Browser]`.
+2. The browser will be brought to the foreground automatically on the submit page.
 3. Once you manually click the CAPTCHA (and/or submit), the script detects the form change, and automatically resumes live verdict polling in your Zed terminal!
 
 ## Supporting New Languages
@@ -174,35 +153,37 @@ Instead of maintaining two separate template files, make one IDE point to the ot
 
 **Option A: Make Zed use VS Code's `cpp.json`**
 
-```bash
-# 1. Backup Zed's current snippets
-cp ~/.config/zed/snippets/c++.json ~/.config/zed/snippets/c++.json.bak
-
-# 2. Replace Zed's cpp.json with a symlink to VS Code's cpp.json
-ln -sf ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/.config/zed/snippets/c++.json
-
-# 3. Tell this tool to read from Zed snippets
-python3 ~/.vc-zed-cp-helper/main.py set_template zed_snippets
-```
+1. Backup Zed's current snippets:
+   - Open `~/.config/zed/snippets/c++.json` and save a copy somewhere safe
+2. Delete Zed's `c++.json` and create a symlink to VS Code's file:
+   - In terminal: `ln -sf ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/.config/zed/snippets/c++.json`
+3. In your `cpp.json`, make sure you have a snippet named exactly `boilerplate` (lowercase):
+   ```json
+   {
+     "boilerplate": {
+       "prefix": "cp",
+       "body": [
+         "#include <bits/stdc++.h>",
+         "using namespace std;",
+         "// ... your template here ..."
+       ],
+       "description": "C++ Boilerplate"
+     }
+   }
+   ```
+4. Run **CP: Set Template** task and set it to `zed_snippets`
 
 Now edit `cpp.json` in either Zed or VS Code — both see the same file.
 
 **Option B: Make VS Code use Zed's `c++.json`**
 
-```bash
-# 1. Backup VS Code's current snippets
-cp ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/Library/Application\ Support/Code/User/snippets/cpp.json.bak
-
-# 2. Replace VS Code's cpp.json with a symlink to Zed's c++.json
-ln -sf ~/.config/zed/snippets/c++.json ~/Library/Application\ Support/Code/User/snippets/cpp.json
-```
+1. Backup VS Code's current snippets:
+   - Open `~/Library/Application Support/Code/User/snippets/cpp.json` and save a copy somewhere safe
+2. Delete VS Code's `cpp.json` and create a symlink to Zed's file:
+   - In terminal: `ln -sf ~/.config/zed/snippets/c++.json ~/Library/Application\ Support/Code/User/snippets/cpp.json`
 
 ### Which Snippet to Use as Template?
 
-When using `set_template zed_snippets`, the tool looks for a snippet in this order:
-1. A snippet named `CP Template`
-2. A snippet named `C++ Boilerplate`
-3. A snippet named `Boilerplate`
-4. The first snippet in the file
+When using `zed_snippets` template source, the tool looks for a snippet named exactly `boilerplate` (case-insensitive) in `~/.config/zed/snippets/c++.json`.
 
-Make sure your main boilerplate template has one of these names in your `cpp.json`.
+Make sure your main boilerplate template has this name in your `cpp.json`.

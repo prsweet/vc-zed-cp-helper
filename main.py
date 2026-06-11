@@ -221,14 +221,12 @@ def process_problem(data, active_folder):
             if zed_snippets.exists():
                 try:
                     snippet_data = json.loads(zed_snippets.read_text(encoding="utf-8"))
-                    # Look for a snippet named "CP Template" or "C++ Boilerplate" or first snippet
+                    # Look for snippet named "boilerplate" (case-insensitive)
                     template_key = None
-                    for key in ["CP Template", "C++ Boilerplate", "Boilerplate"]:
-                        if key in snippet_data:
+                    for key in snippet_data:
+                        if key.lower() == "boilerplate":
                             template_key = key
                             break
-                    if not template_key and snippet_data:
-                        template_key = list(snippet_data.keys())[0]
 
                     if template_key:
                         body = snippet_data[template_key].get("body", [])
@@ -237,6 +235,8 @@ def process_problem(data, active_folder):
                         content = re.sub(r"\$\d+", "", content)
                         content = re.sub(r"\$\{\d+(:.*?)?\}", "", content)
                         print(f"[Companion] Using Zed snippet: {template_key}")
+                    else:
+                        print(f"[Companion] No snippet named 'boilerplate' found in {zed_snippets}")
                 except Exception as e:
                     print(f"[Companion] Failed to parse Zed snippets: {e}")
 
