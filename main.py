@@ -179,10 +179,38 @@ def get_project_folder(source_file):
 
 
 def get_binary_path(source_file):
-    project_folder = get_project_folder(source_file)
-    compiled_dir = project_folder / ".Compiled"
+    compiled_dir = Path(APP_DIR).expanduser() / ".Compiled"
     compiled_dir.mkdir(exist_ok=True)
-    return compiled_dir / Path(source_file).stem
+    # Use parent directory name and file stem to prevent name collisions
+    safe_name = f"{source_file.parent.name}_{source_file.stem}"
+    safe_name = re.sub(r"[^\w_]", "", safe_name)
+    return compiled_dir / safe_name
+
+
+def get_testcases_path(source_file):
+    project_folder = get_project_folder(source_file)
+    testcases_dir = project_folder / ".testcases"
+    testcases_dir.mkdir(exist_ok=True)
+    return testcases_dir / f"{Path(source_file).stem}.json"
+
+
+def prune_compiled_binaries():
+    """Deletes compiled binaries older than 24 hours in the global .Compiled directory."""
+    try:
+        compiled_dir = Path(APP_DIR).expanduser() / ".Compiled"
+        if not compiled_dir.exists():
+            return
+        now = time.time()
+        limit = now - 86400  # 24 hours
+        for item in compiled_dir.iterdir():
+            if item.is_file():
+                if item.stat().st_mtime < limit:
+                    try:
+                        item.unlink()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
 
 # ======================== Listener ========================
@@ -204,6 +232,23 @@ class CompanionHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
+    def do_GET(self):
+        import urllib.parse
+        parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path == "/command":
+            params = urllib.parse.parse_qs(parsed_url.query)
+            action = params.get("action", [None])[0]
+            file_path = params.get("file", [None])[0]
+            if action:
+                if file_path:
+                    active_problem["file_path"] = Path(file_path)
+                self.server.foc_handle_command(action)
+                self.send_response(200)
+                self.end_headers()
+                return
+        self.send_response(404)
+        self.end_headers()
+
 
 def process_problem(data, active_folder):
     problem_name = data.get("name", "problem")
@@ -221,6 +266,9 @@ def process_problem(data, active_folder):
 
     print(f"\n[Companion] Received problem: {problem_name}")
     print(f"[Companion] Writing to: {file_path}")
+
+    url = data.get("url", "")
+    time_limit = data.get("timeLimit", 0)  # in ms
 
     # Write template if file doesn't exist
     if not file_path.exists():
@@ -266,41 +314,34 @@ def process_problem(data, active_folder):
                     except Exception as e:
                         print(f"[Companion] Failed to read boilerplate: {e}")
 
-        file_path.write_text(content, encoding="utf-8")
-
-    # Tests blocks & Meta extraction — use language-appropriate comment syntax
-    url = data.get("url", "")
-    time_limit = data.get("timeLimit", 0)  # in ms, from Competitive Companion
-    tl_line = f"TIME_LIMIT: {time_limit}ms\n" if time_limit else ""
-    if lang_key == "python":
-        url_marker = f"# URL: {url}"
-        tests_str = f"\n\n{url_marker}\n\"\"\" === TEST CASES ===\n{tl_line}"
-        for i, test in enumerate(data.get("tests", [])):
-            tests_str += f"[Case {i + 1}]\n"
-            tests_str += f"Input:\n{test.get('input', '').strip()}\n"
-            tests_str += f"Expected:\n{test.get('output', '').strip()}\n\n"
-        tests_str += "=== END TEST CASES === \"\"\"\n"
+        # Prepend URL comment to the top of the file
+        url_comment = f"# URL: {url}\n" if file_ext == ".py" else f"// URL: {url}\n"
+        full_content = url_comment + content
+        file_path.write_text(full_content, encoding="utf-8")
     else:
-        url_marker = f"// URL: {url}"
-        tests_str = f"\n\n{url_marker}\n/* === TEST CASES ===\n{tl_line}"
-        for i, test in enumerate(data.get("tests", [])):
-            tests_str += f"[Case {i + 1}]\n"
-            tests_str += f"Input:\n{test.get('input', '').strip()}\n"
-            tests_str += f"Expected:\n{test.get('output', '').strip()}\n\n"
-        tests_str += "=== END TEST CASES === */\n"
+        # If the file already exists, make sure it has the URL comment at the top if missing
+        original_code = file_path.read_text(encoding="utf-8")
+        url_pattern = r"^(?://|#) URL: https?://\S+"
+        if not re.match(url_pattern, original_code):
+            url_comment = f"# URL: {url}\n" if file_ext == ".py" else f"// URL: {url}\n"
+            file_path.write_text(url_comment + original_code, encoding="utf-8")
 
-    # Append tests to source file
-    original_code = file_path.read_text(encoding="utf-8")
-
-    # Strip old test cases if they exist (anchored to end-of-file region)
-    # Remove URL marker line only if it's on its own line (not part of user code)
-    original_code = re.sub(r"\n*(?://|#) URL: https?://\S+\n(?:(?:/\*|\"\"\") === TEST CASES ===.*?=== END TEST CASES === (?:\*/|\"\"\")\s*)", "", original_code, flags=re.DOTALL)
-
-    new_code = original_code.rstrip() + tests_str
-    file_path.write_text(new_code, encoding="utf-8")
-    print(
-        f"[Companion] Saved {len(data.get('tests', []))} tests in {file_path.name}"
-    )
+    # Save tests to the .testcases JSON database file
+    testcases_path = get_testcases_path(file_path)
+    testcases_data = {
+        "name": problem_name,
+        "url": url,
+        "timeLimit": time_limit,
+        "tests": [
+            {
+                "input": test.get("input", ""),
+                "output": test.get("output", "")
+            }
+            for test in data.get("tests", [])
+        ]
+    }
+    testcases_path.write_text(json.dumps(testcases_data, indent=2), encoding="utf-8")
+    print(f"[Companion] Saved {len(data.get('tests', []))} tests in hidden database: {testcases_path.name}")
     print(f"[Companion] Ready in Zed! Open {file_path}")
 
     return file_path
@@ -358,12 +399,23 @@ def get_active_zed_folder():
     if sys.platform != "darwin":
         return None
     try:
+        applescript = """
+        tell application "System Events"
+            if exists process "zed" then
+                tell process "zed" to get name of front window
+            else if exists process "Zed" then
+                tell process "Zed" to get name of front window
+            else
+                return ""
+            end if
+        end tell
+        """
         title = (
             subprocess.check_output(
                 [
                     "osascript",
                     "-e",
-                    'tell application "System Events" to get name of front window of process "Zed"',
+                    applescript,
                 ],
                 stderr=subprocess.DEVNULL,
             )
@@ -393,23 +445,353 @@ def get_active_zed_folder():
     return None
 
 
+# Global state to track active problem context in the REPL
+import threading
+active_problem = {
+    "file_path": None,
+    "name": None
+}
+
+
+def get_prompt():
+    if active_problem["file_path"]:
+        return f"\033[96mcp-helper [{active_problem['file_path'].name}]\033[0m> "
+    return "\033[96mcp-helper\033[0m> "
+
+
+def print_help():
+    print("""
+Available Commands:
+  r, run      Compile and run tests for the active problem.
+  a, add      Add a custom test case to the active problem.
+  e, edit     Edit an existing testcase for the active problem.
+  v, view     Reprint all test cases for the active problem.
+  s, submit   Submit active problem solution to Codeforces / AtCoder.
+  h, help     Print this help message.
+  q, exit     Quit the CP helper shell.
+""")
+
+
+def shell_view():
+    file_path = active_problem["file_path"]
+    if not file_path:
+        print("⚠️  No active problem loaded yet. Use Competitive Companion browser extension.")
+        return
+    tests = load_tests_for_file(file_path)
+    if not tests:
+        print("⚠️  No test cases found for the active problem.")
+        return
+    print(f"\n=================== TEST CASES ===================")
+    for idx, t in enumerate(tests):
+        print(f"[Case {idx + 1}]")
+        print("Input:")
+        print(t["test"].rstrip())
+        print("Expected:")
+        print(t["correct_answers"][0].rstrip() if t["correct_answers"] else "(no expected)")
+        print("-" * 35)
+    print(f"==================================================")
+
+
+def shell_run():
+    file_path = active_problem["file_path"]
+    if not file_path:
+        print("⚠️  No active problem loaded yet.")
+        return
+    class Args:
+        def __init__(self, file):
+            self.file = file
+    run_cmd(Args(file_path))
+
+
+def open_buffer_in_zed(source_file, add_blank=False):
+    tests_path = get_testcases_path(source_file)
+    data = {}
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+            
+    tests = data.get("tests", [])
+    
+    # Format the cases into a pretty text buffer
+    lines = []
+    lines.append(f"# === TEST CASES FOR: {source_file.name} ===")
+    lines.append("# Edit inputs and expected outputs. Save (Cmd+S) and Close (Cmd+W) to apply changes.")
+    lines.append("# To add a case, write a new '=== Case X ===' block at the bottom.")
+    lines.append("# To delete a case, just remove its block.")
+    lines.append("")
+
+    for idx, t in enumerate(tests):
+        lines.append(f"=== Case {idx + 1} ===")
+        lines.append("Input:")
+        lines.append(t.get("input", "").rstrip())
+        lines.append("")
+        lines.append("Expected:")
+        lines.append(t.get("output", "").rstrip())
+        lines.append("")
+
+    if add_blank:
+        lines.append(f"=== Case {len(tests) + 1} ===")
+        lines.append("Input:")
+        lines.append("")
+        lines.append("Expected:")
+        lines.append("")
+        
+    temp_file = Path(tempfile.gettempdir()) / f"cp_cases_{source_file.stem}.test"
+    temp_file.write_text("\n".join(lines), encoding="utf-8")
+    
+    # Open in Zed and wait
+    import shutil
+    zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
+    subprocess.run([zed_bin, "-w", str(temp_file)])
+    
+    # Read the updated buffer back
+    if temp_file.exists():
+        content = temp_file.read_text(encoding="utf-8")
+        try:
+            temp_file.unlink()
+        except Exception:
+            pass
+            
+        # Parse the custom format
+        cases_raw = re.split(r"=== Case \d+ ===", content)
+        new_tests = []
+        for case_str in cases_raw:
+            case_str = case_str.strip()
+            if not case_str:
+                continue
+            
+            # Extract Input: and Expected:
+            input_marker = "Input:"
+            expected_marker = "Expected:"
+            
+            if input_marker in case_str and expected_marker in case_str:
+                try:
+                    input_idx = case_str.index(input_marker) + len(input_marker)
+                    expected_idx = case_str.index(expected_marker)
+                    
+                    input_val = case_str[input_idx:expected_idx].strip()
+                    expected_val = case_str[expected_idx + len(expected_marker):].strip()
+                    
+                    new_tests.append({
+                        "input": input_val + "\n" if input_val else "",
+                        "output": expected_val + "\n" if expected_val else ""
+                    })
+                except Exception:
+                    pass
+                    
+        # Save back to JSON database
+        data["tests"] = new_tests
+        tests_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return len(new_tests)
+    return len(tests)
+
+
+class CancelledException(Exception):
+    pass
+
+
+def _read_multiline_cancelable(prompt):
+    print(prompt)
+    lines = []
+    try:
+        while True:
+            line = input()
+            if line.strip().lower() in ("q", "exit", "cancel", ":q"):
+                raise CancelledException()
+            if line == "" and lines:  # Empty line after content = done
+                break
+            if line == "" and not lines:
+                break  # Immediate Enter = empty input
+            lines.append(line)
+    except KeyboardInterrupt:
+        raise CancelledException()
+    return "\n".join(lines)
+
+
+def shell_add():
+    file_path = active_problem["file_path"]
+    if not file_path:
+        print("⚠️  No active problem loaded yet.")
+        return
+
+    print(f"\n📝 Adding custom test case to \033[96m{file_path.name}\033[0m")
+    print("   (Type 'q', 'exit', or press Ctrl+C at any prompt to cancel)")
+
+    try:
+        test_input = _read_multiline_cancelable("\033[1mEnter input\033[0m (empty line to finish):")
+        test_output = _read_multiline_cancelable("\n\033[1mEnter expected output\033[0m (empty line to finish, or Enter immediately to skip):")
+    except CancelledException:
+        print("\n⚠️  Add case cancelled. No changes were made.")
+        return
+
+    # Save to JSON database
+    tests_path = get_testcases_path(file_path)
+    data = {}
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if "tests" not in data:
+        data["tests"] = []
+
+    data["tests"].append({
+        "input": test_input,
+        "output": test_output
+    })
+
+    tests_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    next_case_num = len(data["tests"])
+    if test_output:
+        label = test_output[:50] + ('...' if len(test_output) > 50 else '')
+        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m (expected: {label})")
+    else:
+        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m (no expected output)")
+
+
+def shell_edit():
+    file_path = active_problem["file_path"]
+    if not file_path:
+        print("⚠️  No active problem loaded yet.")
+        return
+    print(f"\n✏️  Opening test cases buffer in Zed to edit...")
+    num_cases = open_buffer_in_zed(file_path, add_blank=False)
+    print(f"✅ Test cases updated! Total cases: {num_cases}")
+
+
+def shell_submit():
+    file_path = active_problem["file_path"]
+    if not file_path:
+        print("⚠️  No active problem loaded yet.")
+        return
+    class Args:
+        def __init__(self, file):
+            self.file = file
+            self.yes = False
+    submit_cmd(Args(file_path))
+
+
+import queue
+import select
+
+command_queue = queue.Queue()
+
+
+def focus_zed_terminal():
+    """Toggles/focuses the terminal panel in Zed on macOS."""
+    if sys.platform == "darwin":
+        try:
+            # First activate zed using standard Applescript (does not require assistive access)
+            subprocess.run(["osascript", "-e", 'tell application "zed" to activate'], capture_output=True)
+            
+            applescript = """
+            tell application "System Events"
+                if exists process "zed" then
+                    tell process "zed"
+                        set frontmost to true
+                        keystroke "`" using control down
+                    end tell
+                else if exists process "Zed" then
+                    tell process "Zed"
+                        set frontmost to true
+                        keystroke "`" using control down
+                    end tell
+                end if
+            end tell
+            """
+            res = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=2)
+            if res.returncode != 0 and "assistive access" in res.stderr:
+                print("\n⚠️  Note: To automatically focus the terminal when adding test cases, please grant Accessibility permissions to Zed (or your terminal app) in System Settings -> Privacy & Security -> Accessibility.")
+        except Exception:
+            pass
+
+
+def execute_command(cmd_line):
+    parts = cmd_line.split()
+    if not parts:
+        return
+    cmd = parts[0].lower()
+
+    if cmd in ("help", "h"):
+        print_help()
+    elif cmd in ("exit", "quit", "q"):
+        print("Exiting CP Helper shell. Goodbye!")
+        sys.exit(0)
+    elif cmd in ("view", "v"):
+        shell_view()
+    elif cmd in ("run", "r"):
+        shell_run()
+    elif cmd in ("add", "a"):
+        shell_add()
+    elif cmd == "add_remote":
+        shell_add()
+    elif cmd in ("edit", "e"):
+        shell_edit()
+    elif cmd in ("submit", "s"):
+        shell_submit()
+    else:
+        print(f"❌ Unknown command: '{cmd}'. Type 'h' or 'help' for instructions.")
+
+
+def repl_loop():
+    # Print the initial prompt
+    prompt = get_prompt()
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    while True:
+        try:
+            # 1. Check if there are dispatched commands in the queue
+            try:
+                cmd_line = command_queue.get_nowait()
+                # Clear the prompt line
+                sys.stdout.write("\r\033[K")
+                execute_command(cmd_line)
+                # Print prompt again
+                prompt = get_prompt()
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+                continue
+            except queue.Empty:
+                pass
+
+            # 2. Check if user typed anything on stdin
+            r, _, _ = select.select([sys.stdin], [], [], 0.1)
+            if r:
+                cmd_line = sys.stdin.readline()
+                if not cmd_line:  # EOF
+                    print("\nExiting CP Helper shell. Goodbye!")
+                    break
+                cmd_line = cmd_line.strip()
+                if cmd_line:
+                    execute_command(cmd_line)
+                # Print prompt again
+                prompt = get_prompt()
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+        except KeyboardInterrupt:
+            # Graceful cancellation of commands/REPL loop
+            print("\n")
+            prompt = get_prompt()
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+
+
 def listen_cmd(args):
     # Determine the target directory: defaults to current directory (".")
     target_dir = Path(args.directory).resolve()
 
     force_kill_process_on_port(PORT)
 
+    # Prune old compiled binaries
+    prune_compiled_binaries()
+
     # Write PID file
     pid_path = Path(APP_DIR).expanduser() / "listener.pid"
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text(str(os.getpid()), encoding="utf-8")
-
-    print(f"[Listen] Starting Competitive Companion listener on port {PORT}...")
-    print(f"[Listen] Saving problems to: {target_dir}")
-    print("[Listen] Waiting for requests from browser extension...")
-
-    # Pre-create the directory if it doesn't exist
-    target_dir.mkdir(parents=True, exist_ok=True)
 
     socketserver.TCPServer.allow_reuse_address = True
     try:
@@ -428,23 +810,24 @@ def listen_cmd(args):
         problem_name = data.get("name", "problem")
         time_limit = data.get("timeLimit", 0)
         tl_str = f" (TL: {time_limit}ms)" if time_limit else ""
-        print(f"\n{'─' * 45}")
+
         file_path = process_problem(data, target_dir)
         if file_path:
-            print(f"[Companion] ✅ Problem #{problem_count[0]} ready: {problem_name}{tl_str}")
+            active_problem["file_path"] = file_path
+            active_problem["name"] = problem_name
+
+            print(f"\n{'─' * 45}")
+            print(f"📥 Received Problem #{problem_count[0]}: {problem_name}{tl_str}")
+            print(f"   Saved to: {file_path.name}")
             print(f"{'─' * 45}")
 
-            # macOS native notification
-            if sys.platform == "darwin":
-                try:
-                    subprocess.run(
-                        ["osascript", "-e",
-                         f'display notification "Problem #{problem_count[0]}: {problem_name}" '
-                         f'with title "CP Helper" sound name "Glass"'],
-                        capture_output=True, timeout=3
-                    )
-                except Exception:
-                    pass
+            # Print test cases directly to the listener terminal
+            shell_view()
+            
+            # Print a fresh prompt so the user knows they can continue typing
+            prompt = get_prompt()
+            sys.stdout.write(f"\r\033[K{prompt}")
+            sys.stdout.flush()
 
             import shutil
             zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
@@ -456,12 +839,27 @@ def listen_cmd(args):
             # '-a' adds the file to the active or nearest workspace cleanly
             subprocess.run([zed_bin, "-a", str(file_path)])
 
+    def handle_command(action):
+        action = action.lower()
+        if action in ("add", "a"):
+            command_queue.put("add_remote")
+        else:
+            command_queue.put(action)
+
     server.foc_process_problem = handle_problem
+    server.foc_handle_command = handle_command
+
+    # Start the HTTP server on a daemon thread so it doesn't block the prompt
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    print(f"[Listen] Starting Competitive Companion listener on port {PORT}...")
+    print(f"[Listen] Saving problems to: {target_dir}")
+    print("[Listen] Unified CP Shell started. Waiting for requests from browser extension...")
+    print("         Type 'help' or 'h' for list of commands.\n")
 
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print(f"\n[Listen] Server stopped. {problem_count[0]} problem(s) received this session.")
+        repl_loop()
     finally:
         try:
             pid_path.unlink()
@@ -527,6 +925,51 @@ def extract_time_limit_from_code(code):
     if m:
         return int(m.group(1)) / 1000.0
     return TIME_LIMIT_SEC
+
+
+def load_tests_for_file(source_file):
+    """Loads tests for a given source file from its .testcases/<stem>.json file.
+    Falls back to parsing comment blocks in the code for backward compatibility."""
+    tests_path = get_testcases_path(source_file)
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+            tests = []
+            for test in data.get("tests", []):
+                tests.append({
+                    "test": test.get("input", ""),
+                    "correct_answers": [test.get("output", "")] if test.get("output", "") is not None else []
+                })
+            return tests
+        except Exception:
+            pass
+
+    # Fallback to comment parsing
+    try:
+        code = source_file.read_text(encoding="utf-8")
+        return extract_tests_from_code(code)
+    except Exception:
+        return []
+
+
+def load_time_limit_for_file(source_file):
+    """Loads time limit (in seconds) for a given source file from its .testcases/<stem>.json file,
+    or falls back to parsing comments, then falls back to default TIME_LIMIT_SEC."""
+    tests_path = get_testcases_path(source_file)
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+            time_limit_ms = data.get("timeLimit", 0)
+            if time_limit_ms:
+                return time_limit_ms / 1000.0
+        except Exception:
+            pass
+
+    try:
+        code = source_file.read_text(encoding="utf-8")
+        return extract_time_limit_from_code(code)
+    except Exception:
+        return TIME_LIMIT_SEC
 
 
 def _format_wa_diff(expected_str, actual_str):
@@ -626,16 +1069,16 @@ def run_cmd(args):
         return
 
     lang_key = get_saved_lang()
-    code = source_file.read_text(encoding="utf-8")
-
-    # Extract time limit from the test block (falls back to default)
-    tl_sec = extract_time_limit_from_code(code)
+    # Extract time limit from database (falls back to code if JSON is missing)
+    tl_sec = load_time_limit_for_file(source_file)
     print(f"🔧 \033[90mLanguage: {lang_key} │ Time Limit: {tl_sec:.1f}s\033[0m\n")
 
-    tests = extract_tests_from_code(code)
+    tests = load_tests_for_file(source_file)
 
     if not tests:
-        print("⚠️  No tests found. Running interactively (Ctrl+D to send EOF, Ctrl+C to stop).")
+        print("⚠️  No test cases found for this problem.")
+        print("💡 To fetch them, open the problem page in your browser and click the Competitive Companion extension icon.\n")
+        print("👉 Running interactively (Ctrl+D to send EOF, Ctrl+C to stop)...")
         run_cmd_list = compile_and_get_run_cmd(source_file, lang_key)
         if run_cmd_list:
             try:
@@ -1144,13 +1587,24 @@ def submit_cmd(args):
         return
 
     source_code = source_file.read_text(encoding="utf-8")
-    # Support both C++/Java style (// URL:) and Python style (# URL:)
-    m_url = re.search(r"(?://|#) URL: (https?://\S+)", source_code)
-    if not m_url:
-        print(f"❌ Error: No URL comment found in the file (expected '// URL: ...' or '# URL: ...').")
-        return
 
-    url = m_url.group(1)
+    # Try to load URL from database
+    url = None
+    tests_path = get_testcases_path(source_file)
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+            url = data.get("url")
+        except Exception:
+            pass
+
+    if not url:
+        # Support both C++/Java style (// URL:) and Python style (# URL:)
+        m_url = re.search(r"(?://|#) URL: (https?://\S+)", source_code)
+        if not m_url:
+            print(f"❌ Error: No URL comment found in the file (expected '// URL: ...' or '# URL: ...').")
+            return
+        url = m_url.group(1)
     info = _detect_platform(url)
     if not info:
         print(f"❌ Unsupported platform or URL format: {url}")
@@ -1303,91 +1757,70 @@ def _read_multiline(prompt):
 
 
 def add_test_cmd(args):
-    """Add a custom test case to a source file interactively."""
+    """Add a custom test case to a source file interactively using console prompt (TUI)."""
     source_file = Path(args.file).resolve()
     if not source_file.exists():
         print(f"❌ Error: File {source_file} not found.")
         return
-
-    code = source_file.read_text(encoding="utf-8")
-
-    # Detect comment style from file extension
-    is_python = source_file.suffix == ".py"
-
-    # Count existing cases
-    existing_cases = re.findall(r"\[Case \d+\]", code)
-    next_case_num = len(existing_cases) + 1
 
     print(f"\n📝 Adding custom test case to \033[96m{source_file.name}\033[0m")
-    if existing_cases:
-        print(f"   ({len(existing_cases)} existing case{'s' if len(existing_cases) != 1 else ''} found)")
-    print()
+    print("   (Type 'q', 'exit', or press Ctrl+C at any prompt to cancel)")
 
-    # Read input
-    test_input = _read_multiline("\033[1mEnter input\033[0m (empty line to finish):")
-    if not test_input:
-        print("\n⚠️  Empty input provided. Adding test with empty input.")
-
-    # Read expected output
-    test_output = _read_multiline("\n\033[1mEnter expected output\033[0m (empty line to finish, or Enter immediately to skip):")
-
-    # Build the new case block
-    new_case = f"[Case {next_case_num}]\n"
-    new_case += f"Input:\n{test_input}\n"
-    new_case += f"Expected:\n{test_output}\n\n"
-
-    # Check if test block exists
-    has_cpp_block = "/* === TEST CASES ===" in code
-    has_py_block = '""" === TEST CASES ===' in code
-
-    if has_cpp_block:
-        code = code.replace(
-            "=== END TEST CASES === */",
-            f"{new_case}=== END TEST CASES === */"
-        )
-    elif has_py_block:
-        code = code.replace(
-            '=== END TEST CASES === """',
-            f'{new_case}=== END TEST CASES === """'
-        )
-    else:
-        # No test block exists — create one
-        if is_python:
-            block = f'\n\n""" === TEST CASES ===\n{new_case}=== END TEST CASES === """\n'
-        else:
-            block = f'\n\n/* === TEST CASES ===\n{new_case}=== END TEST CASES === */\n'
-        code = code.rstrip() + block
-
-    source_file.write_text(code, encoding="utf-8")
-
-    if test_output:
-        label = test_output[:50] + ('...' if len(test_output) > 50 else '')
-        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m to {source_file.name} (expected: {label})")
-    else:
-        print(f"\n✅ Added \033[92mCase {next_case_num}\033[0m to {source_file.name} (no expected output — will show your output)")
-
-
-# ======================== Open Command ========================
-
-def open_cmd(args):
-    """Open the problem URL from the source file in the default browser."""
-    source_file = Path(args.file).resolve()
-    if not source_file.exists():
-        print(f"❌ Error: File {source_file} not found.")
+    try:
+        test_input = _read_multiline_cancelable("\033[1mEnter input\033[0m (empty line to finish):")
+        test_output = _read_multiline_cancelable("\n\033[1mEnter expected output\033[0m (empty line to finish, or Enter immediately to skip):")
+    except CancelledException:
+        print("\n⚠️  Add case cancelled. No changes were made.")
         return
 
-    code = source_file.read_text(encoding="utf-8")
-    m = re.search(r"(?://|#) URL: (https?://\S+)", code)
-    if not m:
-        print("❌ No problem URL found in the file.")
-        print("   URL is embedded by the listener when parsing a problem.")
-        return
+    # Save to JSON database
+    tests_path = get_testcases_path(source_file)
+    data = {}
+    if tests_path.exists():
+        try:
+            data = json.loads(tests_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    if "tests" not in data:
+        data["tests"] = []
 
-    url = m.group(1)
-    print(f"🌐 Opening: {url}")
+    data["tests"].append({
+        "input": test_input,
+        "output": test_output
+    })
 
-    import webbrowser
-    webbrowser.open(url)
+    try:
+        tests_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        num_cases = len(data["tests"])
+        print(f"\n✅ Test cases updated! Total cases: {num_cases}")
+    except Exception as e:
+        print(f"❌ Failed to save test cases: {e}")
+
+
+# ======================== Send REPL Command ========================
+
+def send_repl_cmd(args):
+    """Sends a command to the active REPL shell via HTTP."""
+    action = args.action
+    file_arg = args.file if hasattr(args, "file") and args.file else ""
+    import urllib.request
+    import urllib.parse
+    
+    # URL encode parameters
+    params = {"action": action}
+    if file_arg:
+        params["file"] = str(Path(file_arg).resolve())
+        
+    query = urllib.parse.urlencode(params)
+    url = f"http://localhost:{PORT}/command?{query}"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=60) as response:
+            if response.status == 200:
+                pass
+    except Exception as e:
+        print(f"❌ Failed to send command '{action}' to REPL listener: {e}")
+        print("   Make sure the listener is running (run task: CP: Start Listener)")
 
 
 # ======================== Main ========================
@@ -1417,9 +1850,12 @@ def main():
     add_test_parser = subparsers.add_parser("add_test", help="Add a custom test case interactively")
     add_test_parser.add_argument("file", help="Source code file")
 
-    # Open
-    open_parser = subparsers.add_parser("open", help="Open problem URL in browser")
-    open_parser.add_argument("file", help="Source code file")
+    # Send REPL command
+    send_parser = subparsers.add_parser("send_repl", help="Send command to running REPL")
+    send_parser.add_argument("action", help="Command to send (r, s, a, e, v)")
+    send_parser.add_argument("file", nargs="?", default="", help="Active source file path")
+
+
 
     # Set Language
     lang_parser = subparsers.add_parser("set_lang", help="Set language for run/submit")
@@ -1446,8 +1882,9 @@ def main():
         submit_cmd(args)
     elif args.command == "add_test":
         add_test_cmd(args)
-    elif args.command == "open":
-        open_cmd(args)
+    elif args.command == "send_repl":
+        send_repl_cmd(args)
+
     elif args.command == "set_lang":
         set_lang_cmd(args)
     elif args.command == "set_browser":
