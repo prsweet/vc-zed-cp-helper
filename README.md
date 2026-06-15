@@ -7,8 +7,8 @@ This tool runs entirely locally as a Python script. It intercepts problem data f
 ## Features
 
 - 📥 **Auto-Parses Problems**: Captures problem requirements and sample test cases via Competitive Companion.
-- 🏗️ **Native C++ Template Injection**: Injects test cases directly into block comments at the bottom of the `.cpp` file (no multiple `.in`/`.out` files).
-- 🚀 **Auto-Run Test Cases**: Compiles and runs all embedded test cases locally with precise execution time per case.
+- 🏗️ **Boilerplate Template Injection**: Injects your C++ template cleanly (no test cases comments in code; test cases are kept in a separate database under `.testcases/`).
+- 🚀 **Auto-Run Test Cases**: Compiles and runs all sample and custom test cases locally from the JSON database with precise execution time per case.
 - 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
 - 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
 - 🧱 **No WASM/Sandboxing Limits**: Standard Zed CP extensions have network/sandbox limits. This native approach has zero limits.
@@ -51,26 +51,29 @@ If the language-specific file doesn't exist, it falls back to `boilerplate.cpp`.
 Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following tasks with your `APP_DIR` to integrate smoothly with Zed's task runner (`cmd+shift+R`):
 
 ```json
-// if you changed to the custom directory, change the directory to main.py in all tasks accordingly
 [
   {
     "label": "CP: Start Listener (Current Folder)",
     "command": "python3 ~/.vc-zed-cp-helper/main.py listen",
     "use_new_terminal": true,
     "allow_concurrent_runs": false,
-    "hide": "never"
+    "hide": "never",
+    "reveal_target": "center"
   },
   {
     "label": "CP: Run Tests",
-    "command": "python3 ~/.vc-zed-cp-helper/main.py run \"${ZED_FILE}\"",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py send_repl r \"${ZED_FILE}\"",
     "use_new_terminal": false,
-    "allow_concurrent_runs": false
+    "allow_concurrent_runs": false,
+    "reveal": "never",
+    "hide": "always"
   },
   {
     "label": "CP: Submit to Codeforces / AtCoder",
     "command": "python3 ~/.vc-zed-cp-helper/main.py submit \"${ZED_FILE}\"",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false
+    "use_new_terminal": true,
+    "allow_concurrent_runs": true,
+    "reveal": "always"
   },
   {
     "label": "CP: Set Language [cpp23]",
@@ -89,12 +92,28 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following task
     "command": "python3 ~/.vc-zed-cp-helper/main.py status",
     "use_new_terminal": false,
     "allow_concurrent_runs": false
+  },
+  {
+    "label": "CP: Add Custom Test Case",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py send_repl a \"${ZED_FILE}\"",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "never",
+    "hide": "always"
+  },
+  {
+    "label": "CP: Edit Test Cases",
+    "command": "python3 ~/.vc-zed-cp-helper/main.py send_repl e \"${ZED_FILE}\"",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "never",
+    "hide": "always"
   }
 ]
 ```
 
 ### 4. Basic Keymap
-Below is a basic keymap. You can add these to your (`~/.config/zed/keymap.json`) according to your workspace preferences:
+Below is the optimized keymap. Add these to your user keymap file (`~/.config/zed/keymap.json`) to integrate shortcuts cleanly:
 
 ```json
 [
@@ -103,35 +122,71 @@ Below is a basic keymap. You can add these to your (`~/.config/zed/keymap.json`)
     "bindings": {
       "cmd-'": ["task::Spawn", { "task_name": "CP: Run Tests" }],
       "cmd-enter": ["task::Spawn", { "task_name": "CP: Submit to Codeforces / AtCoder" }],
-      "cmd-r": ["task::Spawn", { "task_name": "CP: Start Listener (Current Folder)" }]
+      "cmd-r": ["workspace::SendKeystrokes", "cmd-alt-shift-r cmd-\\"],
+      "cmd-alt-a": ["workspace::SendKeystrokes", "cmd-k cmd-right a enter"],
+      "cmd-alt-e": ["task::Spawn", { "task_name": "CP: Edit Test Cases" }]
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      "shift-enter": [
+        "terminal::SendText",
+        "\u001b\r"
+      ]
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-alt-shift-r": ["task::Spawn", { "task_name": "CP: Start Listener (Current Folder)" }]
     }
   }
 ]
 ```
+
+*(Note: `cmd-r` in Editor mode triggers the split-pane workaround by calling the Workspace-level listener start `cmd-alt-shift-r` and then splitting the pane to the right using `cmd-\\`).*
 
 ---
 
 ## Usage
 
 ### 1. Starting the Listener
-At the start of your programming session, open Zed and launch the **CP: Start Listener (Current Folder)** task.
-
-Click the green `+` on the Competitive Companion extension in your browser when viewing a Codeforces or AtCoder problem. Zed will automatically open the generated source file.
+At the start of your competitive programming session, press **`cmd-r`**.
+* This launches the unified, persistent interactive REPL shell as an editor tab. Drag this tab to the right side of the screen to arrange your workspace as a split editor pane layout (Code on the left, REPL on the right).
+* Click the green `+` on the **Competitive Companion** extension in your browser when viewing a problem page.
+* Zed will automatically save the problem, compile config, and create a clean `.cpp` source file (no block comments at the bottom).
+* Sample test cases are stored in `.testcases/problem_name.json`.
 
 ### 2. Set Language
-You only have to do this once. Run the **CP: Set Language [cpp23]** task. 
-*(You can press `TAB` before hitting enter to modify it to `cpp20`, `cpp17`, `python`, `java`, etc.)*
-This saves the active language inside `~/.vc-zed-cp-helper/config.json`. Every "Run" or "Submit" task will use this language.
+You only have to do this once. Run the **CP: Set Language [cpp23]** task. Every "Run" or "Submit" task will use this language.
+*(You can press **TAB** before hitting Enter in the task selector to modify `cpp23` to `cpp20`, `cpp17`, `python`, `java`, etc.)*
 
-### 3. Testing 
-Solve your problem and save the file. Open the Zed Task Menu (`cmd+shift+R`) and run **CP: Run Tests**. The script compiles the code dynamically and tests every embedded sample case.
+### 3. Set Template Source
+By default, the tool injects the template from `~/.vc-zed-cp-helper/boilerplate.cpp` (or corresponding language extension). If you prefer to use your native Zed snippets instead, run the **CP: Set Template [boilerplate]** task.
+*(You can press **TAB** before hitting Enter in the task selector to modify the argument to `zed_snippets` instead of `boilerplate`.)*
 
-### 4. Direct Submissions
-Run the **CP: Submit to Codeforces / AtCoder** task. 
-- It strips out the embedded test case blocks from the bottom.
-- Opens Safari invisibly, finds the Codeforces/AtCoder judge, sets the code, sets your selected language, and safely submits.
-- **For Codeforces:** It tracks the submission live and prints `WJ`, `Running on test 5`, until eventually showing `✅ ACCEPTED` or `❌ WRONG ANSWER` directly in Zed's terminal.
-- **For AtCoder:** Validates the submission and handles Captchas via Safari forwarding if required.
+### 4. Testing
+Solve your problem and save the file. Press **`cmd-'`** to run tests.
+* The script sends the command to your active REPL pane on the right without opening new tabs.
+* If no test cases are found yet, it will print instructions on how to fetch them using the browser extension.
+
+### 5. Direct Submissions
+Press **`cmd-enter`** to submit the solution.
+* This automatically spawns a separate terminal tab (`python3 main.py submit`) for the submission, allowing you to submit and poll multiple submissions concurrently without blocking your main REPL.
+* **For Codeforces:** It tracks the submission live and prints `WJ`, `Running on test 5`, etc., until eventually showing `✅ ACCEPTED` or `❌ WRONG ANSWER` directly in the terminal tab.
+
+### 6. Interactive REPL Commands
+Inside the active REPL terminal pane on the right, you can also type commands directly:
+* `r` or `run` - Compile and run tests.
+* `a` or `add` - Add custom test cases interactively in the console.
+* `e` or `edit` - Edit existing test cases using a temporary tab.
+* `v` or `view` - View current test cases.
+* `s` or `submit` - Submit solution to Codeforces/AtCoder.
+* `h` or `help` - Show help.
+
+
+---
 
 ## Dealing with CAPTCHAs
 Platforms like AtCoder, and occasionally Codeforces (via Cloudflare), heavily use invisible CAPTCHAs.
