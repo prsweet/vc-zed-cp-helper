@@ -7,7 +7,7 @@ This tool runs entirely locally as a Python script. It intercepts problem data f
 ## Features
 
 - 📥 **Auto-Parses Problems**: Captures problem requirements and sample test cases via Competitive Companion.
-- 🏗️ **Boilerplate Template Injection**: Injects your C++ template cleanly (no test cases comments in code; test cases are kept in a separate database under `.testcases/`).
+- 🏗️ **Boilerplate Template Injection**: Injects your C++ template cleanly (no test cases comments in code; test cases are kept in a separate database under `~/.vc-zed-cp-helper/.testcases/`).
 - 🚀 **Auto-Run Test Cases**: Compiles and runs all sample and custom test cases locally from the JSON database with precise execution time per case.
 - 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
 - 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
@@ -37,7 +37,7 @@ By default (and recommended), the script and its configurations live in `~/.vc-z
 cd ~ && git clone https://github.com/prsweet/vc-zed-cp-helper.git .vc-zed-cp-helper # OR your directory
 ```
 
-*(Note: If you want to install it to a different custom folder or path, you must edit the `APP_DIR = "~/.vc-zed-cp-helper"` variable at the top of `main.py` to match your desired path!)*
+*(Note: If you want to install it to a different custom folder or path, you must edit the `APP_DIR = "~/.vc-zed-cp-helper"` variable at the top of `main.py` to match your desired path! All system-generated folders like `.testcases/` and `.Compiled/` will automatically be created inside your chosen directory.)*
 
 ### 2. Add Custom Code Template (Optional)
 Put your default template inside the app directory at `~/.vc-zed-cp-helper/`:
@@ -156,7 +156,7 @@ At the start of your competitive programming session, press **`cmd-r`**.
 * This launches the unified, persistent interactive REPL shell as an editor tab. Drag this tab to the right side of the screen to arrange your workspace as a split editor pane layout (Code on the left, REPL on the right).
 * Click the green `+` on the **Competitive Companion** extension in your browser when viewing a problem page.
 * Zed will automatically save the problem, compile config, and create a clean `.cpp` source file (no block comments at the bottom).
-* Sample test cases are stored in `.testcases/problem_name.json`.
+* Sample test cases are stored in `~/.vc-zed-cp-helper/.testcases/problem_name.json`.
 
 ### 2. Set Language
 You only have to do this once. Run the **CP: Set Language [cpp23]** task. Every "Run" or "Submit" task will use this language.

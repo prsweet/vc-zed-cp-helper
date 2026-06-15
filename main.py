@@ -188,8 +188,7 @@ def get_binary_path(source_file):
 
 
 def get_testcases_path(source_file):
-    project_folder = get_project_folder(source_file)
-    testcases_dir = project_folder / ".testcases"
+    testcases_dir = Path(APP_DIR).expanduser() / ".testcases"
     testcases_dir.mkdir(exist_ok=True)
     return testcases_dir / f"{Path(source_file).stem}.json"
 
