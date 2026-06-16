@@ -972,14 +972,18 @@ def load_time_limit_for_file(source_file):
 
 
 def _format_wa_diff(expected_str, actual_str):
-    """Format a visual line-by-line diff between expected and actual output.
-    Only colors the exact characters that differ in red."""
+    """Format a visual side-by-side diff between expected and actual output."""
     exp_lines = expected_str.strip().splitlines() if expected_str.strip() else []
     act_lines = actual_str.strip().splitlines() if actual_str.strip() else []
     max_lines = max(len(exp_lines), len(act_lines))
 
     if max_lines == 0:
         return "  (both empty)"
+
+    # Determine column widths: at least 30 chars, max 45 chars
+    max_exp_len = max((len(l) for l in exp_lines), default=0)
+    max_act_len = max((len(l) for l in act_lines), default=0)
+    col_width = max(30, min(45, max(max_exp_len, max_act_len)))
 
     def color_diff(exp, act):
         """Return act string with only differing characters in red."""
@@ -995,36 +999,38 @@ def _format_wa_diff(expected_str, actual_str):
                     result.append("\033[91m" + a + "\033[0m")
         return "".join(result)
 
-    # Single line format
-    if max_lines == 1 and len(exp_lines) == 1 and len(act_lines) == 1:
-        exp, act = exp_lines[0], act_lines[0]
-        if exp == act:
-            return "  Expected \u2502 " + exp + "\n  Got      \u2502 " + act
-        colored = color_diff(exp, act)
-        return "  Expected \u2502 " + exp + "\n  Got      \u2502 " + colored + " \u25c4"
-
-    # Multi-line format
-    exp_width = max((len(l) for l in exp_lines), default=8)
-    exp_width = max(exp_width, 8)
-    exp_width = min(exp_width, 40)
-
     result = []
-    header = "  \033[1m" + "Expected".ljust(exp_width) + " \u2502 Got\033[0m"
-    result.append(header)
-    separator = "  " + ("\u2500" * exp_width) + "\u253c\u2500" + ("\u2500" * exp_width)
-    result.append(separator)
+    
+    # Header box drawing using safe + corners
+    hdr_exp = " EXPECTED ".ljust(col_width, "─")
+    hdr_act = " GOT ".ljust(col_width, "─")
+    result.append(f"+──{hdr_exp}─+─{hdr_act}──+")
 
     for i in range(max_lines):
-        exp = exp_lines[i] if i < len(exp_lines) else "(missing)"
-        act = act_lines[i] if i < len(act_lines) else "(missing)"
-        if exp == act:
-            result.append("  " + exp.ljust(exp_width) + " \u2502 " + act)
+        e_line = exp_lines[i] if i < len(exp_lines) else ""
+        a_line = act_lines[i] if i < len(act_lines) else ""
+        
+        # Format expected column
+        e_display = e_line.ljust(col_width)
+        
+        # Format got column with diff coloring
+        if e_line == a_line:
+            a_display = a_line.ljust(col_width)
+            pointer = ""
         else:
-            colored = color_diff(exp, act)
-            result.append("  " + exp.ljust(exp_width) + " \u2502 " + colored + " \u25c4")
+            colored_act = color_diff(e_line, a_line)
+            visual_len = len(a_line)
+            padding = " " * max(0, col_width - visual_len)
+            a_display = colored_act + padding
+            pointer = " \033[91m◀\033[0m"
+
+        result.append(f"│  {e_display} │  {a_display} │{pointer}")
+
+    # Bottom border using safe + corners
+    result.append(f"+──" + ("─" * col_width) + "─+─" + ("─" * col_width) + "──+")
 
     if len(exp_lines) != len(act_lines):
-        result.append("  \033[91m(" + str(len(exp_lines)) + " lines expected, " + str(len(act_lines)) + " lines received)\033[0m")
+        result.append(f"  \033[90mNote: Expected {len(exp_lines)} lines, but got {len(act_lines)} lines.\033[0m")
 
     return "\n".join(result)
 
@@ -1055,6 +1061,20 @@ def compile_and_get_run_cmd(source_file, lang_key):
         print(res.stderr)
         return None
     print(f"✅ \033[92mCompiled successfully in {((t1 - t0) * 1000):.0f}ms\033[0m\n")
+    if res.stderr and res.stderr.strip():
+        print(f"\033[93m⚠️  Compilation Warnings:\033[0m")
+        print(f"\033[90m{res.stderr.strip()}\033[0m\n")
+
+    # Ad-hoc code sign binary on macOS to eliminate gatekeeper scan lag
+    if sys.platform == "darwin" and "run" not in lang and "run_compiled" not in lang:
+        try:
+            subprocess.run(
+                ["codesign", "-s", "-", "--force", str(bin_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
 
     if "run_compiled" in lang:
         return lang["run_compiled"] + [str(source_file.parent), source_file.stem]
@@ -1062,6 +1082,7 @@ def compile_and_get_run_cmd(source_file, lang_key):
 
 
 def run_cmd(args):
+    print("\033[H\033[J", end="")
     source_file = Path(args.file).resolve()
     if not source_file.exists():
         print(f"❌ Error: File {source_file} not found.")
@@ -1139,10 +1160,19 @@ def run_cmd(args):
                     print(f"✅ \033[92mPassed\033[0m - {elapsed_ms:.0f}ms")
                     passed += 1
                 else:
-                    print(f"❌ \033[91mWrong Answer\033[0m - {elapsed_ms:.0f}ms")
-                    print(f"\n\033[1mInput:\033[0m")
-                    print(test_in.strip())
-                    print()
+                    print(f"❌ \033[91mWrong Answer\033[0m - {elapsed_ms:.0f}ms\n")
+                    
+                    # Dynamic width input card using safe + corners
+                    input_lines = test_in.strip().splitlines()
+                    max_in_len = max((len(l) for l in input_lines), default=0)
+                    in_width = max(30, max_in_len)
+                    
+                    hdr_in = " INPUT ".ljust(in_width, "─")
+                    print(f"+──{hdr_in}──+")
+                    for line in input_lines:
+                        print(f"│  {line.ljust(in_width)}  │")
+                    print(f"+──" + ("─" * in_width) + "──+\n")
+                    
                     expected_str = test_out_expected[0] if test_out_expected else ""
                     print(_format_wa_diff(expected_str, proc.stdout))
         except subprocess.TimeoutExpired:
@@ -1580,6 +1610,7 @@ def _do_submit(submit_url, fill_js, result_js, platform, ready_selector):
 # ======================== Main Submit Command ========================
 
 def submit_cmd(args):
+    print("\033[H\033[J", end="")
     source_file = Path(args.file).resolve()
     if not source_file.exists():
         print(f"❌ Error: File {source_file} not found.")

@@ -11,6 +11,9 @@ This tool runs entirely locally as a Python script. It intercepts problem data f
 - 🚀 **Auto-Run Test Cases**: Compiles and runs all sample and custom test cases locally from the JSON database with precise execution time per case.
 - 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
 - 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
+- 🧹 **Auto-Clearing Terminal**: Automatically wipes the terminal panel clean before executing compiles and runs, keeping your workspace clutter-free.
+- 📊 **Side-by-Side Diff Cards**: Formats wrong answers in elegant side-by-side expected vs. actual tables with character-level highlights and safe corner layout compatible with any terminal font.
+- ⚠️ **Compiler Warnings Visibility**: Displays compilation warnings directly in the console even on successful builds.
 - 🧱 **No WASM/Sandboxing Limits**: Standard Zed CP extensions have network/sandbox limits. This native approach has zero limits.
 
 ## Prerequisites
@@ -145,7 +148,72 @@ Below is the optimized keymap. Add these to your user keymap file (`~/.config/ze
 ]
 ```
 
-*(Note: `cmd-r` in Editor mode triggers the split-pane workaround by calling the Workspace-level listener start `cmd-alt-shift-r` and then splitting the pane to the right using `cmd-\\`).*
+---
+
+## Performance & Compilation Optimizations
+
+To make your local development loop as snappy and responsive as possible, we highly recommend setting up the following optimizations on macOS.
+
+### 1. Eliminating the macOS 1-Second Launch Lag (Gatekeeper)
+
+Even though this tool automatically runs `codesign -s -` to sign the compiled binaries, macOS's security service (`syspolicyd`) will still intercept any newly compiled binary on its first execution to scan its CDHash. Because the helper compiles a fresh binary every time you save, this introduces a **0.8s - 1.5s lag** on the first run of every test case.
+
+**The Fix (Grant Developer Tools Privileges):**
+1. Open **System Settings** on your Mac.
+2. Go to **Privacy & Security** > **Developer Tools**.
+3. Click the `+` button and add your terminal emulator (e.g., *Terminal*, *iTerm2*), your IDE (*Zed*), and/or your Python interpreter (`python3` / `/opt/homebrew/bin/python3`).
+4. Toggle them **ON** and restart your IDE/Terminal.
+5. macOS will now completely bypass security scans for binaries executed by these programs, dropping launch latencies to **0.00s**.
+
+---
+
+### 2. Precompiling Headers (PCH) for C++ (Compiles in ~0.20s)
+
+Compiling `#include <bits/stdc++.h>` from scratch parses over 100K lines of code, taking 1.5s to 3.0s per compile. By using a Precompiled Header (PCH), compilation drops to under **0.20 seconds**.
+
+#### Step A: Generate the PCH file locally
+Compile `stdc++.h` into a precompiled binary matching the exact C++ standard version and compiler you intend to use.
+
+For **Clang / clang++** (macOS Default):
+```bash
+# Compile stdc++.h into stdc++.h.pch
+clang++ -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.pch
+```
+
+For **GCC / g++** (Homebrew):
+```bash
+# Compile stdc++.h into stdc++.h.gch
+g++ -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.gch
+```
+
+#### Step B: Update your `LANGUAGES` config in `main.py`
+Open your `main.py` and modify the compile list for C++ to pass the PCH include flags:
+
+* **For Clang (`clang++` or standard Mac `g++`)**:
+  Add `"-include-pch"` and the path to your `.pch` file:
+  ```python
+      "cpp23": {
+          "compile": [
+              "g++",
+              "-std=c++23",
+              "-O2",
+              "-Wall",
+              "-Wextra",
+              "-Winvalid-pch",
+              "-include-pch",
+              "/usr/local/include/bits/stdc++.h.pch"
+          ],
+          ...
+  ```
+  *(Note: The `-Winvalid-pch` flag is highly recommended, as it will issue warnings in your terminal if your PCH goes out of sync with your compilation flags).*
+
+* **For GCC (`g++` via Homebrew)**:
+  GCC automatically searches for `.gch` files inside the same directory as the included header, so you only need to ensure the directory containing your `.gch` file is searched:
+  ```python
+      "cpp23": {
+          "compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch"],
+          ...
+  ```
 
 ---
 
