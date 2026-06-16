@@ -131,15 +131,6 @@ Below is the optimized keymap. Add these to your user keymap file (`~/.config/ze
     }
   },
   {
-    "context": "Terminal",
-    "bindings": {
-      "shift-enter": [
-        "terminal::SendText",
-        "\u001b\r"
-      ]
-    }
-  },
-  {
     "context": "Workspace",
     "bindings": {
       "cmd-alt-shift-r": ["task::Spawn", { "task_name": "CP: Start Listener (Current Folder)" }]
