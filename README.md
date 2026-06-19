@@ -304,3 +304,20 @@ Now edit `cpp.json` in either Zed or VS Code — both see the same file.
 When using `zed_snippets` template source, the tool looks for a snippet named exactly `boilerplate` (case-insensitive) in `~/.config/zed/snippets/c++.json`.
 
 Make sure your main boilerplate template has this name in your `cpp.json`.
+
+---
+
+## 💡 Pro-Tips
+
+### 1. Blazing Fast Test Runs on macOS (Drop Latency to 3-4ms)
+Since this tool is designed for macOS, security scans (`syspolicyd`) can check newly compiled binaries and add ~200ms of lag on the first run. To drop execution time from 200ms down to **3–4ms**:
+1. Open **System Settings** -> **Privacy & Security** -> **Developer Tools**.
+2. Click `+` and add **Zed** and whatever terminal emulator you use (e.g. *Terminal*, *iTerm2*). Toggle them **ON**.
+3. Now go to **Privacy & Security** -> **Full Disk Access**, and also add both **Zed** and your terminal emulator there.
+
+![macOS Developer Tools and Full Disk Access Settings](macos_developer_tools_settings.png)
+
+### 2. Fast Policy-Based Data Structures (PBDS) on macOS (Clang)
+Since GCC can be slow to set up or run on macOS, you can use Clang while retaining GCC-like features (like `#include <bits/stdc++.h>` and Policy-Based Data Structures):
+* Clone the [pbds_on_clang](https://github.com/prsweet/pbds_on_clang.git) helper repository.
+* It sets up the desired environment for Apple Clang (including `<bits/stdc++.h>` and Policy-Based DS) and includes a script to build Precompiled Headers (PCH) automatically.
