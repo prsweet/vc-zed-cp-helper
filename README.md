@@ -271,7 +271,7 @@ clang++ -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/lo
 For **GCC / g++** (Homebrew):
 ```bash
 # Compile stdc++.h into stdc++.h.gch
-g++ -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.gch
+g++-15 -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.gch
 ```
 
 #### Step B: Update your `LANGUAGES` config in `main.py`
@@ -299,6 +299,6 @@ Open your `main.py` and modify the compile list for C++ to pass the PCH include 
   GCC automatically searches for `.gch` files inside the same directory as the included header, so you only need to ensure the directory containing your `.gch` file is searched:
   ```python
       "cpp23": {
-          "compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch"],
+          "compile": ["g++-15", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch"],
           ...
   ```
