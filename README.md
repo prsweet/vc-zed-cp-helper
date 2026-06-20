@@ -253,8 +253,8 @@ Since this tool is designed for macOS, security scans (`syspolicyd`) can check n
 
 ### 2. Fast Policy-Based Data Structures (PBDS) on macOS (Clang)
 Since GCC can be slow to set up or run on macOS, you can use Clang while retaining GCC-like features (like `#include <bits/stdc++.h>` and Policy-Based Data Structures):
-* Clone the [pbds_on_clang](https://github.com/prsweet/pbds_on_clang.git) helper repository.
-* It sets up the desired environment for Apple Clang (including `<bits/stdc++.h>` and Policy-Based DS) and includes a script to build Precompiled Headers (PCH) automatically.
+* Clone the [cp_with_clang](https://github.com/prsweet/cp_with_clang.git) helper repository.
+* It sets up the desired environment for Apple Clang (including `<bits/stdc++.h>` and Policy-Based DS).
 
 ### 3. Precompiling Headers (PCH) for C++ (Compiles in ~0.20s)
 Compiling `#include <bits/stdc++.h>` from scratch parses over 100K lines of code, taking 1.5s to 3.0s per compile. By using a Precompiled Header (PCH), compilation drops to under **0.20 seconds**.
