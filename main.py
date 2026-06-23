@@ -27,7 +27,17 @@ LANGUAGES = {
         "ac_name": "C++ 20 (gcc 12.2)",
     },
     "cpp23": {
-        "compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra"],
+        "compile": [
+            "g++",
+            "-std=c++23",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Winvalid-pch",
+            # pre compiled bits/stdc++.h header for faster compilation
+            # "-include-pch",
+            # "/usr/local/include/bits/stdc++.h.pch"
+        ],
         "cf_id": "91",
         "cf_name": "GNU G++23 14.2 (64 bit, msys2)",
         "ac_id": "5002",
@@ -140,14 +150,45 @@ def set_template_cmd(args):
         return
     cfg = _load_config()
     cfg["template"] = template
+    if template == "zed_snippets":
+        if not args.snippet_name or not args.snippet_name.strip():
+            print("❌ Snippet name is required for Zed snippets.")
+            return
+
+        path = "~/.config/zed/snippets/c++.json"
+        zed_snippets = Path(path).expanduser()
+        if zed_snippets.exists():
+            try:
+                snippet_data = json.loads(zed_snippets.read_text(encoding="utf-8"))
+                # Look for snippet named "boilerplate" (case-insensitive)
+                template_key = None
+                for key in snippet_data:
+                    if key.lower() == args.snippet_name.strip().lower():
+                        template_key = key
+                        break
+
+                if template_key:
+                    pass
+                else:
+                    print(f"[Companion] ❌ No snippet named \033[91m {args.snippet_name}\033[0m found in \033[92m {zed_snippets}\033[0m .")
+                    return
+            except Exception as e:
+                print(f"[Companion] Failed to parse Zed snippets: {e}")
+                return
+        else:
+            print(f"[Companion] ❌ Failed to parse Zed snippets, cpp.json not found in \033[91m {path}\033[0m")
+            return
+        cfg["snippet_name"] = args.snippet_name.strip().lower()
     _save_config(cfg)
 
     if template == "boilerplate":
         print(f"✅ Template source set to \033[92mboilerplate.cpp\033[0m")
         print(f"   Reading from: {Path(APP_DIR).expanduser() / 'boilerplate.cpp'}")
     else:
-        print(f"✅ Template source set to \033[92mZed snippets\033[0m")
-        print(f"   Reading from: ~/.config/zed/snippets/c++.json")
+        print(
+            f"✅ Template source set to \033[92mZed snippets\033[0m (snippet name: \033[31m{args.snippet_name}\033[0m)"
+        )
+        print("   Reading from: ~/.config/zed/snippets/c++.json")
     print(f"\n   Saved to {CONFIG_PATH}")
 
 
@@ -277,6 +318,7 @@ def process_problem(data, active_folder):
 
         if template_source == "zed_snippets":
             # Read from Zed's cpp.json snippets (useful for multi-IDE sync via symlink)
+            snippet_name = cfg.get("snippet_name", "boilerplate")
             zed_snippets = Path("~/.config/zed/snippets/c++.json").expanduser()
             if zed_snippets.exists():
                 try:
@@ -284,7 +326,7 @@ def process_problem(data, active_folder):
                     # Look for snippet named "boilerplate" (case-insensitive)
                     template_key = None
                     for key in snippet_data:
-                        if key.lower() == "boilerplate":
+                        if key.lower() == snippet_name:
                             template_key = key
                             break
 
@@ -296,7 +338,9 @@ def process_problem(data, active_folder):
                         content = re.sub(r"\$\{\d+(:.*?)?\}", "", content)
                         print(f"[Companion] Using Zed snippet: {template_key}")
                     else:
-                        print(f"[Companion] No snippet named 'boilerplate' found in {zed_snippets}")
+                        print(
+                            f"[Companion] No snippet named \033[91m{snippet_name}\033[0m found in \033[92m{zed_snippets}\033[0m "
+                        )
                 except Exception as e:
                     print(f"[Companion] Failed to parse Zed snippets: {e}")
 
@@ -1765,6 +1809,9 @@ def status_cmd(args):
     print(f"   Language:  {lang}")
     print(f"   Browser:   {browser}")
     print(f"   Template:  {template_name}")
+    if template_name=="Zed snippets (cpp.json)":
+        print(f"   Snippets:  {cfg.get('snippet_name', 'boilerplate')}")
+    
 
 
 # ======================== Add Test Command ========================
@@ -1898,6 +1945,7 @@ def main():
     # Set Template
     template_parser = subparsers.add_parser("set_template", help="Set template source (boilerplate.cpp or Zed snippets)")
     template_parser.add_argument("template", choices=["boilerplate", "zed_snippets"], help="Template source")
+    template_parser.add_argument("snippet_name", nargs="?", default=None, help="Write snippet name for Zed snippets")
 
     # Status
     subparsers.add_parser("status", help="Check listener status and current config")
