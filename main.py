@@ -31,10 +31,8 @@ LANGUAGES = {
             "g++",
             "-std=c++23",
             "-O2",
-            "-Wall",
-            "-Wextra",
             "-Winvalid-pch",
-            # pre compiled bits/stdc++.h header for faster compilation
+            # precompiled bits/stdc++.h header for faster compilation
             # "-include-pch",
             # "/usr/local/include/bits/stdc++.h.pch"
         ],
@@ -160,7 +158,7 @@ def set_template_cmd(args):
         if zed_snippets.exists():
             try:
                 snippet_data = json.loads(zed_snippets.read_text(encoding="utf-8"))
-                # Look for snippet named "boilerplate" (case-insensitive)
+                # Look for snippet named "{snippet_name}" (case-insensitive)
                 template_key = None
                 for key in snippet_data:
                     if key.lower() == args.snippet_name.strip().lower():
@@ -176,7 +174,7 @@ def set_template_cmd(args):
                 print(f"[Companion] Failed to parse Zed snippets: {e}")
                 return
         else:
-            print(f"[Companion] ❌ Failed to parse Zed snippets, cpp.json not found in \033[91m {path}\033[0m")
+            print(f"[Companion] ❌ Failed to parse Zed snippets, c++.json not found in \033[91m {path}\033[0m")
             return
         cfg["snippet_name"] = args.snippet_name.strip().lower()
     _save_config(cfg)
@@ -318,12 +316,12 @@ def process_problem(data, active_folder):
 
         if template_source == "zed_snippets":
             # Read from Zed's cpp.json snippets (useful for multi-IDE sync via symlink)
-            snippet_name = cfg.get("snippet_name", "boilerplate")
+            snippet_name = str(cfg.get("snippet_name", "boilerplate")).strip().lower()
             zed_snippets = Path("~/.config/zed/snippets/c++.json").expanduser()
             if zed_snippets.exists():
                 try:
                     snippet_data = json.loads(zed_snippets.read_text(encoding="utf-8"))
-                    # Look for snippet named "boilerplate" (case-insensitive)
+                    # Look for snippet named "{snippet_name}" (case-insensitive)
                     template_key = None
                     for key in snippet_data:
                         if key.lower() == snippet_name:
