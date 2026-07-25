@@ -151,19 +151,6 @@ def set_template_cmd(args):
     print(f"\n   Saved to {CONFIG_PATH}")
 
 
-def is_folder_open_in_zed(folder_path):
-    """Checks if a Zed process is currently managing this folder path."""
-    try:
-        output = subprocess.check_output(["ps", "aux"]).decode("utf-8")
-        folder_str = str(folder_path)
-        for line in output.splitlines():
-            if "Zed" in line and folder_str in line:
-                return True
-        return False
-    except Exception:
-        return False
-
-
 def get_project_folder(source_file):
     # Heuristic: the project folder is the first directory looking upwards that has .TestCases or .zed,
     # or just the directory of the file if not found.
@@ -828,15 +815,16 @@ def listen_cmd(args):
             sys.stdout.write(f"\r\033[K{prompt}")
             sys.stdout.flush()
 
-            import shutil
-            zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
-            # Handle Zed Logic: Open folder if missing
-            if not is_folder_open_in_zed(target_dir):
-                subprocess.run([zed_bin, str(target_dir)])
-                time.sleep(1)  # Brief pause to let Zed initialize the workspace
-
-            # '-a' adds the file to the active or nearest workspace cleanly
-            subprocess.run([zed_bin, "-a", str(file_path)])
+            # Use native macOS AppleEvents to open the workspace and file seamlessly
+            try:
+                # Tell macOS to hand the folder directly to Zed (ensures the workspace is active)
+                subprocess.run(["open", "-a", "Zed", str(target_dir)], check=False)
+                time.sleep(0.3)  # Brief pause for Zed to register the workspace window
+                
+                # Tell macOS to hand the file directly to Zed (opens it in the active workspace)
+                subprocess.run(["open", "-a", "Zed", str(file_path)], check=False)
+            except Exception as e:
+                print(f"❌ Error sending file to Zed: {e}")
 
     def handle_command(action):
         action = action.lower()
