@@ -11,6 +11,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+try:
+    import readline
+except Exception:
+    readline = None
 
 # System defaults
 PORT = 10043
@@ -151,17 +155,7 @@ def set_template_cmd(args):
     print(f"\n   Saved to {CONFIG_PATH}")
 
 
-def is_folder_open_in_zed(folder_path):
-    """Checks if a Zed process is currently managing this folder path."""
-    try:
-        output = subprocess.check_output(["ps", "aux"]).decode("utf-8")
-        folder_str = str(folder_path)
-        for line in output.splitlines():
-            if "Zed" in line and folder_str in line:
-                return True
-        return False
-    except Exception:
-        return False
+
 
 
 def get_project_folder(source_file):
@@ -393,55 +387,6 @@ def force_kill_process_on_port(port):
         pass  # Port is not in use
 
 
-def get_active_zed_folder():
-    """Uses AppleScript and lsof to magically find Zed's active absolute project directory."""
-    if sys.platform != "darwin":
-        return None
-    try:
-        applescript = """
-        tell application "System Events"
-            if exists process "zed" then
-                tell process "zed" to get name of front window
-            else if exists process "Zed" then
-                tell process "Zed" to get name of front window
-            else
-                return ""
-            end if
-        end tell
-        """
-        title = (
-            subprocess.check_output(
-                [
-                    "osascript",
-                    "-e",
-                    applescript,
-                ],
-                stderr=subprocess.DEVNULL,
-            )
-            .decode("utf-8")
-            .strip()
-        )
-
-        # Zed title looks like: "project_name — file.cpp"
-        # Extract the project name:
-        project_name = title.split(" — ")[0].split(" - ")[0].strip()
-
-        if project_name:
-            lsof_out = subprocess.check_output(
-                ["lsof", "-c", "zed"], stderr=subprocess.DEVNULL
-            ).decode("utf-8", errors="ignore")
-            for line in lsof_out.splitlines():
-                if "DIR" in line and f"/{project_name}" in line:
-                    # Extract path from lsof output (it starts at the first '/')
-                    try:
-                        path = "/" + line.split(" /", 1)[1]
-                        if Path(path).name == project_name and Path(path).is_dir():
-                            return Path(path)
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return None
 
 
 # Global state to track active problem context in the REPL
@@ -450,12 +395,103 @@ active_problem = {
     "file_path": None,
     "name": None
 }
+listener_state = {
+    "target_dir": None
+}
+REPL_COMMANDS = ["run", "r", "add", "a", "edit", "e", "view", "v", "submit", "s", "cd", "pwd", "ls", "help", "h", "exit", "quit", "q"]
+
+
+def _complete_cd_path(text):
+    current = listener_state.get("target_dir") or Path.cwd()
+    raw = text or ""
+    expanded = Path(raw).expanduser()
+
+    if raw.startswith("~"):
+        candidate = expanded
+    elif expanded.is_absolute():
+        candidate = expanded
+    else:
+        candidate = (current / expanded)
+
+    parent = candidate.parent if raw else current
+    prefix = candidate.name if raw else ""
+
+    try:
+        entries = sorted(parent.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except Exception:
+        return []
+
+    out = []
+    for entry in entries:
+        if prefix and not entry.name.startswith(prefix):
+            continue
+        if not entry.is_dir():
+            continue
+        if raw.startswith("~"):
+            try:
+                home = Path.home()
+                rel = entry.resolve().relative_to(home)
+                completion = "~/" + str(rel)
+            except Exception:
+                completion = str(entry)
+        elif Path(raw).is_absolute():
+            completion = str(entry)
+        else:
+            try:
+                completion = str(entry.resolve().relative_to(current.resolve()))
+            except Exception:
+                completion = str(entry)
+        out.append(completion.rstrip("/") + "/")
+    return out
+
+
+def _repl_completer(text, state):
+    line = readline.get_line_buffer() if readline else ""
+    begidx = readline.get_begidx() if readline else 0
+
+    matches = []
+    before = line[:begidx]
+    if re.match(r"^\s*cd\s+$", before):
+        matches = _complete_cd_path(text)
+    elif begidx == 0:
+        matches = sorted([cmd for cmd in REPL_COMMANDS if cmd.startswith(text)])
+
+    if state < len(matches):
+        return matches[state]
+    return None
+
+
+def setup_readline():
+    if not readline:
+        return
+    try:
+        readline.parse_and_bind("set editing-mode emacs")
+    except Exception:
+        pass
+    try:
+        # GNU readline
+        readline.parse_and_bind("tab: complete")
+    except Exception:
+        pass
+    try:
+        # macOS libedit fallback
+        readline.parse_and_bind("bind -e")
+        readline.parse_and_bind("bind ^I rl_complete")
+    except Exception:
+        pass
+    try:
+        readline.set_completer_delims(" \t\n;")
+        readline.set_completer(_repl_completer)
+    except Exception:
+        pass
 
 
 def get_prompt():
+    target_dir = listener_state.get("target_dir")
+    dir_label = str(target_dir) if target_dir else "?"
     if active_problem["file_path"]:
-        return f"\033[96mcp-helper [{active_problem['file_path'].name}]\033[0m> "
-    return "\033[96mcp-helper\033[0m> "
+        return f"cp-helper [{active_problem['file_path'].name}] ({dir_label})> "
+    return f"cp-helper ({dir_label})> "
 
 
 def print_help():
@@ -466,6 +502,9 @@ Available Commands:
   e, edit     Edit an existing testcase for the active problem.
   v, view     Reprint all test cases for the active problem.
   s, submit   Submit active problem solution to Codeforces / AtCoder.
+  cd <path>   Change receive directory for new problems (supports relative/absolute).
+  pwd         Show current receive directory.
+  ls          List contents of the current receive directory.
   h, help     Print this help message.
   q, exit     Quit the CP helper shell.
 """)
@@ -672,10 +711,66 @@ def shell_submit():
     submit_cmd(Args(file_path))
 
 
+def shell_pwd():
+    target_dir = listener_state.get("target_dir")
+    if not target_dir:
+        print("⚠️  Listener directory is not initialized yet.")
+        return
+    print(f"📁 Current receive directory: {target_dir}")
+
+
+def shell_cd(path_arg):
+    if not path_arg:
+        print("⚠️  Usage: cd <path>")
+        return
+
+    current = listener_state.get("target_dir") or Path.cwd()
+    candidate = Path(path_arg).expanduser()
+    if not candidate.is_absolute():
+        candidate = (current / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+
+    if not candidate.exists():
+        print(f"❌ Directory does not exist: {candidate}")
+        return
+    if not candidate.is_dir():
+        print(f"❌ Not a directory: {candidate}")
+        return
+
+    listener_state["target_dir"] = candidate
+    print(f"✅ Receive directory changed to: {candidate}")
+
+
+def shell_ls():
+    target_dir = listener_state.get("target_dir")
+    if not target_dir:
+        print("⚠️  Listener directory is not initialized yet.")
+        return
+    if not target_dir.exists():
+        print(f"❌ Directory does not exist: {target_dir}")
+        return
+    
+    print(f"📂 Contents of {target_dir.name}:")
+    try:
+        entries = sorted(target_dir.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        visible = [e for e in entries if not e.name.startswith(".")]
+        if not visible:
+            print("  (Empty directory)")
+        for entry in visible:
+            icon = "📁" if entry.is_dir() else "📄"
+            print(f"  {icon} {entry.name}")
+    except Exception as e:
+        print(f"❌ Error reading directory: {e}")
+
+
 import queue
-import select
+import signal
 
 command_queue = queue.Queue()
+repl_running = threading.Event()
+repl_running.set()
+input_waiting = threading.Event()
 
 
 def focus_zed_terminal():
@@ -708,16 +803,17 @@ def focus_zed_terminal():
 
 
 def execute_command(cmd_line):
-    parts = cmd_line.split()
+    parts = cmd_line.split(maxsplit=1)
     if not parts:
-        return
+        return True
     cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
 
     if cmd in ("help", "h"):
         print_help()
     elif cmd in ("exit", "quit", "q"):
         print("Exiting CP Helper shell. Goodbye!")
-        sys.exit(0)
+        return False
     elif cmd in ("view", "v"):
         shell_view()
     elif cmd in ("run", "r"):
@@ -730,57 +826,72 @@ def execute_command(cmd_line):
         shell_edit()
     elif cmd in ("submit", "s"):
         shell_submit()
+    elif cmd == "pwd":
+        shell_pwd()
+    elif cmd == "ls":
+        shell_ls()
+    elif cmd == "cd":
+        shell_cd(arg)
     else:
         print(f"❌ Unknown command: '{cmd}'. Type 'h' or 'help' for instructions.")
+    return True
+
+
+def interrupt_repl_input():
+    """Interrupt blocking input() so queued remote commands run immediately."""
+    if not input_waiting.is_set():
+        return
+    try:
+        os.kill(os.getpid(), signal.SIGINT)
+    except Exception:
+        pass
 
 
 def repl_loop():
-    # Print the initial prompt
-    prompt = get_prompt()
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-
-    while True:
+    while repl_running.is_set():
         try:
-            # 1. Check if there are dispatched commands in the queue
-            try:
-                cmd_line = command_queue.get_nowait()
-                # Clear the prompt line
-                sys.stdout.write("\r\033[K")
-                execute_command(cmd_line)
-                # Print prompt again
-                prompt = get_prompt()
-                sys.stdout.write(prompt)
-                sys.stdout.flush()
-                continue
-            except queue.Empty:
-                pass
-
-            # 2. Check if user typed anything on stdin
-            r, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if r:
-                cmd_line = sys.stdin.readline()
-                if not cmd_line:  # EOF
-                    print("\nExiting CP Helper shell. Goodbye!")
+            while True:
+                try:
+                    queued_cmd = command_queue.get_nowait()
+                except queue.Empty:
                     break
-                cmd_line = cmd_line.strip()
-                if cmd_line:
-                    execute_command(cmd_line)
-                # Print prompt again
-                prompt = get_prompt()
-                sys.stdout.write(prompt)
-                sys.stdout.flush()
+                if not execute_command(queued_cmd):
+                    repl_running.clear()
+                    return
+
+            try:
+                if sys.stdout.isatty():
+                    sys.stdout.write("\033[96m")
+                    sys.stdout.flush()
+                input_waiting.set()
+                cmd_line = input(get_prompt())
+            finally:
+                input_waiting.clear()
+                if sys.stdout.isatty():
+                    sys.stdout.write("\033[0m")
+                    sys.stdout.flush()
+            cmd_line = cmd_line.strip()
+            if cmd_line:
+                if not execute_command(cmd_line):
+                    repl_running.clear()
+                    break
+        except EOFError:
+            print("\nExiting CP Helper shell. Goodbye!")
+            repl_running.clear()
+            break
         except KeyboardInterrupt:
-            # Graceful cancellation of commands/REPL loop
-            print("\n")
-            prompt = get_prompt()
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
+            # Remote command ping or user Ctrl+C.
+            if command_queue.empty():
+                print("\n")
+            continue
 
 
 def listen_cmd(args):
     # Determine the target directory: defaults to current directory (".")
     target_dir = Path(args.directory).resolve()
+    listener_state["target_dir"] = target_dir
+    repl_running.set()
+    setup_readline()
 
     force_kill_process_on_port(PORT)
 
@@ -810,7 +921,8 @@ def listen_cmd(args):
         time_limit = data.get("timeLimit", 0)
         tl_str = f" (TL: {time_limit}ms)" if time_limit else ""
 
-        file_path = process_problem(data, target_dir)
+        receive_dir = listener_state.get("target_dir") or target_dir
+        file_path = process_problem(data, receive_dir)
         if file_path:
             active_problem["file_path"] = file_path
             active_problem["name"] = problem_name
@@ -830,20 +942,19 @@ def listen_cmd(args):
 
             import shutil
             zed_bin = shutil.which("zed") or "/usr/local/bin/zed"
-            # Handle Zed Logic: Open folder if missing
-            if not is_folder_open_in_zed(target_dir):
-                subprocess.run([zed_bin, str(target_dir)])
-                time.sleep(1)  # Brief pause to let Zed initialize the workspace
-
             # '-a' adds the file to the active or nearest workspace cleanly
             subprocess.run([zed_bin, "-a", str(file_path)])
 
     def handle_command(action):
-        action = action.lower()
-        if action in ("add", "a"):
+        action = (action or "").strip()
+        if not action:
+            return
+        cmd = action.split(maxsplit=1)[0].lower()
+        if cmd in ("add", "a"):
             command_queue.put("add_remote")
         else:
             command_queue.put(action)
+        interrupt_repl_input()
 
     server.foc_process_problem = handle_problem
     server.foc_handle_command = handle_command
@@ -854,12 +965,14 @@ def listen_cmd(args):
 
     print(f"[Listen] Starting Competitive Companion listener on port {PORT}...")
     print(f"[Listen] Saving problems to: {target_dir}")
+    print(f"[Listen] Current receive directory: {listener_state['target_dir']}")
     print("[Listen] Unified CP Shell started. Waiting for requests from browser extension...")
     print("         Type 'help' or 'h' for list of commands.\n")
 
     try:
         repl_loop()
     finally:
+        repl_running.clear()
         try:
             pid_path.unlink()
         except Exception:
@@ -973,16 +1086,23 @@ def load_time_limit_for_file(source_file):
 
 def _format_wa_diff(expected_str, actual_str):
     """Format a visual side-by-side diff between expected and actual output."""
-    exp_lines = expected_str.strip().splitlines() if expected_str.strip() else []
-    act_lines = actual_str.strip().splitlines() if actual_str.strip() else []
+    def split_preserving_blank_lines(text):
+        # Keep leading/trailing blank lines visible in the diff.
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        if normalized == "":
+            return []
+        return normalized.split("\n")
+
+    exp_lines = split_preserving_blank_lines(expected_str)
+    act_lines = split_preserving_blank_lines(actual_str)
     max_lines = max(len(exp_lines), len(act_lines))
 
     if max_lines == 0:
         return "  (both empty)"
 
     # Determine column widths: at least 30 chars, max 45 chars
-    max_exp_len = max((len(l) for l in exp_lines), default=0)
-    max_act_len = max((len(l) for l in act_lines), default=0)
+    max_exp_len = max((len(l) if l else 7 for l in exp_lines), default=0)  # "<empty>"
+    max_act_len = max((len(l) if l else 7 for l in act_lines), default=0)
     col_width = max(30, min(45, max(max_exp_len, max_act_len)))
 
     def color_diff(exp, act):
@@ -1011,17 +1131,22 @@ def _format_wa_diff(expected_str, actual_str):
         a_line = act_lines[i] if i < len(act_lines) else ""
         
         # Format expected column
-        e_display = e_line.ljust(col_width)
+        e_vis = e_line if e_line else "\033[90m<empty>\033[0m"
+        e_display = e_vis + (" " * max(0, col_width - (len(e_line) if e_line else 7)))
         
         # Format got column with diff coloring
         if e_line == a_line:
-            a_display = a_line.ljust(col_width)
+            a_vis = a_line if a_line else "\033[90m<empty>\033[0m"
+            a_display = a_vis + (" " * max(0, col_width - (len(a_line) if a_line else 7)))
             pointer = ""
         else:
             colored_act = color_diff(e_line, a_line)
-            visual_len = len(a_line)
-            padding = " " * max(0, col_width - visual_len)
-            a_display = colored_act + padding
+            if a_line == "":
+                a_display = "\033[90m<empty>\033[0m" + (" " * max(0, col_width - 7))
+            else:
+                visual_len = len(a_line)
+                padding = " " * max(0, col_width - visual_len)
+                a_display = colored_act + padding
             pointer = " \033[91m◀\033[0m"
 
         result.append(f"│  {e_display} │  {a_display} │{pointer}")
@@ -1882,7 +2007,7 @@ def main():
 
     # Send REPL command
     send_parser = subparsers.add_parser("send_repl", help="Send command to running REPL")
-    send_parser.add_argument("action", help="Command to send (r, s, a, e, v)")
+    send_parser.add_argument("action", help="Command to send (e.g. r, s, a, e, v, pwd, 'cd ./cses')")
     send_parser.add_argument("file", nargs="?", default="", help="Active source file path")
 
 

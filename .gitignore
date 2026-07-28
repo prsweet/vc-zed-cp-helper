@@ -9,3 +9,7 @@ debuggers/DebugodPy3Ejector.py
 
 /target
 boilerplate.cpp
+config.json
+listener.pid
+.testcases/
+.Compiled/

@@ -1,57 +1,70 @@
-# Zed CP Helper
+<div align="center">
+  <h1>🚀 Zed CP Helper</h1>
+  <p><strong>A fully automated, zero-latency background tool for competitive programming in the <a href="https://zed.dev/">Zed</a> editor on macOS.</strong></p>
 
-A fully automated, native background tool for managing competitive programming workflows seamlessly in the [Zed](https://zed.dev/) editor on macOS.
+  [![macOS](https://img.shields.io/badge/os-macOS-black?style=flat-square&logo=apple)](#)
+  [![Python](https://img.shields.io/badge/python-3.8+-blue?style=flat-square&logo=python)](#)
+  [![Zed](https://img.shields.io/badge/Editor-Zed-orange?style=flat-square)](#)
+  [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](#)
+</div>
 
-This tool runs entirely locally as a Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with problem-specific template and test cases, allows you to instantly compile and run tests in Zed, and even fully automates submissions to Codeforces and AtCoder using Safari.
+<br>
 
-## Features
+This tool runs entirely locally as a lightweight Python script. It intercepts problem data from the [Competitive Companion](https://github.com/jmerle/competitive-companion) browser extension, auto-creates your source files with a problem-specific template and test cases, allows you to instantly compile and run tests directly in Zed, and fully automates **zero-click submissions** to Codeforces and AtCoder using Safari.
 
-- 📥 **Auto-Parses Problems**: Captures problem requirements and sample test cases via Competitive Companion.
-- 🏗️ **Boilerplate Template Injection**: Injects your C++ template cleanly (no test cases comments in code; test cases are kept in a separate database under `~/.vc-zed-cp-helper/.testcases/`).
-- 🚀 **Auto-Run Test Cases**: Compiles and runs all sample and custom test cases locally from the JSON database with precise execution time per case.
-- 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari.
-- 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in the terminal without ever looking at the browser.
-- 🧹 **Auto-Clearing Terminal**: Automatically wipes the terminal panel clean before executing compiles and runs, keeping your workspace clutter-free.
-- 📊 **Side-by-Side Diff Cards**: Formats wrong answers in elegant side-by-side expected vs. actual tables with character-level highlights and safe corner layout compatible with any terminal font.
-- ⚠️ **Compiler Warnings Visibility**: Displays compilation warnings directly in the console even on successful builds.
-- 🧱 **No WASM/Sandboxing Limits**: Standard Zed CP extensions have network/sandbox limits. This native approach has zero limits.
+---
 
-## Prerequisites
+## ✨ Features
 
-- **macOS** (Relies on AppleScript to interact with Safari)
+* 📥 **Auto-Parses Problems**: Instantly captures problem requirements, constraints, and sample test cases via Competitive Companion.
+* 🏗️ **Smart Boilerplate Injection**: Injects your C++ template cleanly. No messy test case comments in your code; test cases are safely stored in a hidden `.testcases/` database.
+* 🚀 **Blazing Fast Test Execution**: Compiles and runs all sample and custom test cases locally with precise execution-time tracking.
+* 🤖 **Zero-Click Submissions**: Submits directly to Codeforces and AtCoder in the background by automating Safari (no manual uploading!).
+* 📁 **Live Directory Switching**: Change where new problems are saved at runtime using `cd <path>` and check it with `pwd` (no listener restart needed).
+* ⌨️ **Readline Autocompletion**: The built-in REPL supports command completion and directory path completion.
+* 📡 **Live Verdict Polling**: Shows live Codeforces status (In queue, Judging, AC, WA) directly in your terminal without looking at the browser.
+* 📊 **Side-by-Side Diff Cards**: Formats wrong answers in elegant side-by-side expected vs. actual tables with character-level highlights.
+* 🧱 **Zero Sandboxing Limits**: Standard Zed CP extensions suffer from WASM/network limits. This native approach has zero limits.
+
+---
+
+## 📋 Prerequisites
+
+- **macOS** *(Relies on native Apple Events for Safari automation)*
 - **Python 3.8+**
 - **Safari** with **"Allow JavaScript from Apple Events"** enabled:
-  - Safari → Preferences → Advanced → Check "Show Develop menu"
-  - Then Develop → Allow JavaScript from Apple Events
+  - `Safari` → `Preferences` → `Advanced` → Check `"Show Develop menu"`
+  - `Develop` → `Allow JavaScript from Apple Events`
 - **[Zed Code Editor](https://zed.dev/)**
-- **C++ Compiler** (e.g., `g++` installed via Homebrew)
-- **[Competitive Companion](https://github.com/jmerle/competitive-companion)** browser extension for Chrome/Firefox/Safari/Brave.
+- **C++ Compiler** (e.g., `g++` via Homebrew or Apple Clang)
+- **[Competitive Companion](https://github.com/jmerle/competitive-companion)** browser extension.
 
-### Why Safari Only?
+> **💡 Why Safari Only?**
+> Submission automation requires the browser to run JavaScript in the background without bringing the window to the foreground. **Only Safari supports this** natively via AppleScript. Other browsers interrupt your workflow by forcing the window to the foreground.
 
-Submission automation requires the browser to run JavaScript in the background without bringing the window to the foreground. **Only Safari supports this** via AppleScript's `do JavaScript ... in tab` command. Other browsers (Brave, Chrome, Orion) require the window to be foregrounded, which interrupts your workflow.
+---
 
-## Installation
+## 🛠️ Installation
 
-### 1. Place the Script
-By default (and recommended), the script and its configurations live in `~/.vc-zed-cp-helper/` in the main script.
+### 1. Clone the Repository
+By default (and highly recommended), the script and its configurations live in `~/.vc-zed-cp-helper/`.
 
 ```bash
-cd ~ && git clone https://github.com/prsweet/vc-zed-cp-helper.git .vc-zed-cp-helper # OR your directory
+cd ~ && git clone https://github.com/prsweet/vc-zed-cp-helper.git .vc-zed-cp-helper
 ```
-
-*(Note: If you want to install it to a different custom folder or path, you must edit the `APP_DIR = "~/.vc-zed-cp-helper"` variable at the top of `main.py` to match your desired path! All system-generated folders like `.testcases/` and `.Compiled/` will automatically be created inside your chosen directory.)*
+*(Note: To use a custom folder, edit the `APP_DIR` variable at the top of `main.py`.)*
 
 ### 2. Add Custom Code Template (Optional)
-Put your default template inside the app directory at `~/.vc-zed-cp-helper/`:
-- C++ → `boilerplate.cpp`
-- Python → `boilerplate.py`
-- Java → `boilerplate.java`
-
-If the language-specific file doesn't exist, it falls back to `boilerplate.cpp`. If neither exists, new files will be empty before injecting tests.
+Drop your default template inside the app directory at `~/.vc-zed-cp-helper/`:
+- **C++** → `boilerplate.cpp`
+- **Python** → `boilerplate.py`
+- **Java** → `boilerplate.java`
 
 ### 3. Setup Zed Tasks
-Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following tasks with your `APP_DIR` to integrate smoothly with Zed's task runner (`cmd+shift+R`):
+Open your Zed tasks file (`~/.config/zed/tasks.json`) and append these tasks to integrate seamlessly with Zed's task runner (`cmd+shift+R`):
+
+<details>
+<summary><strong>Click to view the <code>tasks.json</code> configuration</strong></summary>
 
 ```json
 [
@@ -111,12 +124,20 @@ Open your Zed tasks file (`~/.config/zed/tasks.json`) and add the following task
     "allow_concurrent_runs": false,
     "reveal": "never",
     "hide": "always"
+  },
+  {
+    "label": "CP: Sync boilerplate snippet",
+    "command": "python3 ~/.vc-zed-cp-helper/sync_boilerplate_snippet.py",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
   }
 ]
 ```
+</details>
 
-### 4. Basic Keymap
-Below is the optimized keymap. Add these to your user keymap file (`~/.config/zed/keymap.json`) to integrate shortcuts cleanly:
+### 4. Optimize Your Keymap
+Add these to your user keymap file (`~/.config/zed/keymap.json`) for lightning-fast shortcuts:
 
 ```json
 [
@@ -139,166 +160,72 @@ Below is the optimized keymap. Add these to your user keymap file (`~/.config/ze
 ]
 ```
 
+---
+
+## 🎮 Usage Guide
+
+### 1. Start the Listener
+At the start of your session, press **`cmd-r`**.
+* This launches the unified REPL shell. Drag this tab to the right side of the screen for a perfect split-editor layout.
+* Click the green `+` on the **Competitive Companion** extension in your browser.
+* Zed will automatically create a clean `.cpp` file and append it to your active workspace window.
+
+### 2. Configure Once
+* **Set Language:** Run the **CP: Set Language [cpp23]** task. Every "Run" or "Submit" task will now default to this. *(Use TAB to swap `cpp23` for `python`, `java`, etc.)*
+* **Set Template:** If you prefer Zed snippets over `boilerplate.cpp`, run **CP: Set Template [boilerplate]**.
+
+### 3. Test & Submit
+* **Test (`cmd-'`):** Runs tests directly in your active REPL pane on the right.
+* **Submit (`cmd-enter`):** Spawns a background task tracking the live verdict (`WJ` ➔ `Judging` ➔ `✅ ACCEPTED`).
 
 ---
 
-## Usage
-
-### 1. Starting the Listener
-At the start of your competitive programming session, press **`cmd-r`**.
-* This launches the unified, persistent interactive REPL shell as an editor tab. Drag this tab to the right side of the screen to arrange your workspace as a split editor pane layout (Code on the left, REPL on the right).
-* Click the green `+` on the **Competitive Companion** extension in your browser when viewing a problem page.
-* Zed will automatically save the problem, compile config, and create a clean `.cpp` source file (no block comments at the bottom).
-* Sample test cases are stored in `~/.vc-zed-cp-helper/.testcases/problem_name.json`.
-
-### 2. Set Language
-You only have to do this once. Run the **CP: Set Language [cpp23]** task. Every "Run" or "Submit" task will use this language.
-*(You can press **TAB** before hitting Enter in the task selector to modify `cpp23` to `cpp20`, `cpp17`, `python`, `java`, etc.)*
-
-### 3. Set Template Source
-By default, the tool injects the template from `~/.vc-zed-cp-helper/boilerplate.cpp` (or corresponding language extension). If you prefer to use your native Zed snippets instead, run the **CP: Set Template [boilerplate]** task.
-*(You can press **TAB** before hitting Enter in the task selector to modify the argument to `zed_snippets` instead of `boilerplate`.)*
-
-### 4. Testing
-Solve your problem and save the file. Press **`cmd-'`** to run tests.
-* The script sends the command to your active REPL pane on the right without opening new tabs.
-* If no test cases are found yet, it will print instructions on how to fetch them using the browser extension.
-
-### 5. Direct Submissions
-Press **`cmd-enter`** to submit the solution.
-* This automatically spawns a separate terminal tab (`python3 main.py submit`) for the submission, allowing you to submit and poll multiple submissions concurrently without blocking your main REPL.
-* **For Codeforces:** It tracks the submission live and prints `WJ`, `Running on test 5`, etc., until eventually showing `✅ ACCEPTED` or `❌ WRONG ANSWER` directly in the terminal tab.
-
-### 6. Interactive REPL Commands
-Inside the active REPL terminal pane on the right, you can also type commands directly:
-* `r` or `run` - Compile and run tests.
-* `a` or `add` - Add custom test cases interactively in the console.
-* `e` or `edit` - Edit existing test cases using a temporary tab.
-* `v` or `view` - View current test cases.
-* `s` or `submit` - Submit solution to Codeforces/AtCoder.
+## ⚙️ Interactive REPL Commands
+Inside the active REPL terminal pane, you have full control:
+* `r` / `run` - Compile and run tests.
+* `a` / `add` - Add custom test cases interactively.
+* `e` / `edit` - Edit existing test cases using a temporary tab.
+* `v` / `view` - View current test cases.
+* `s` / `submit` - Submit solution to Codeforces/AtCoder.
+* `cd <path>` - Change the directory where new problems are saved (e.g. `cd cses`, `cd ../dp`).
+* `pwd` - Print current receive directory.
+* `ls` - List contents of the current receive directory.
 * `h` or `help` - Show help.
 
+---
+
+## 🛡️ Dealing with CAPTCHAs
+Platforms like AtCoder and Codeforces occasionally use invisible CAPTCHAs. 
+If automation hits a wall, the terminal will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in Safari`. Safari will automatically foreground. Solve it, and the script instantly detects the form change and resumes live polling in Zed!
 
 ---
 
-## Dealing with CAPTCHAs
-Platforms like AtCoder, and occasionally Codeforces (via Cloudflare), heavily use invisible CAPTCHAs.
-If the automation hits a CAPTCHA wall:
-1. The terminal output will alert you: `🔒 CAPTCHA: Please solve the CAPTCHA in Safari`.
-2. Safari will be brought to the foreground automatically on the submit page.
-3. Once you manually click the CAPTCHA (and/or submit), the script detects the form change, and automatically resumes live verdict polling in your Zed terminal!
+## 💡 Pro-Tips for Maximum Performance
 
-## Supporting New Languages
-To modify compiler flags or add custom languages (e.g. Rust), just edit the `LANGUAGES` mapping inside `main.py`. You'll need the `cf_id` (Codeforces Language ID) or `ac_id` (AtCoder Language ID) depending on the platform.
+### 1. Drop Execution Latency to 3-4ms ⚡
+macOS security scans (`syspolicyd`) add ~200ms of lag when running newly compiled binaries. To fix this:
+1. Go to **System Settings** → **Privacy & Security** → **Developer Tools**.
+2. Add **Zed** and your Terminal emulator (e.g., *iTerm2*). Toggle them **ON**.
+3. Do the same under **Full Disk Access**.
 
----
+![macOS Settings](macos_developer_tools_settings.png)
 
-## Keeping Templates in Sync Across IDEs (Zed + VS Code)
+### 2. Ultra-Fast Precompiled Headers (PCH) 🔥
+Compiling `#include <bits/stdc++.h>` takes 1.5s–3.0s per compile. Using a Precompiled Header drops this to **under 0.20 seconds**.
 
-If you use both **Zed** (with this tool) and **VS Code** (with CPH or similar), you can keep your template consistent across both IDEs by using a symlink.
-
-### The Idea
-Instead of maintaining two separate template files, make one IDE point to the other's file. Edit in either IDE — changes persist in both.
-
-### How to Set Up
-
-**Option A: Make Zed use VS Code's `cpp.json`**
-
-1. Backup Zed's current snippets:
-   - Open `~/.config/zed/snippets/c++.json` and save a copy somewhere safe
-2. Delete Zed's `c++.json` and create a symlink to VS Code's file:
-   - In terminal: `ln -sf ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/.config/zed/snippets/c++.json`
-3. In your `cpp.json`, make sure you have a snippet named exactly `boilerplate` (lowercase):
-   ```json
-   {
-     "boilerplate": {
-       "prefix": "cp",
-       "body": [
-         "#include <bits/stdc++.h>",
-         "using namespace std;",
-         "// ... your template here ..."
-       ],
-       "description": "C++ Boilerplate"
-     }
-   }
-   ```
-4. Run **CP: Status** task and verify it shows `Template: Zed snippets (cpp.json)`
-
-Now edit `cpp.json` in either Zed or VS Code — both see the same file.
-
-**Option B: Make VS Code use Zed's `c++.json`**
-
-1. Backup VS Code's current snippets:
-   - Open `~/Library/Application Support/Code/User/snippets/cpp.json` and save a copy somewhere safe
-2. Delete VS Code's `cpp.json` and create a symlink to Zed's file:
-   - In terminal: `ln -sf ~/.config/zed/snippets/c++.json ~/Library/Application\ Support/Code/User/snippets/cpp.json`
-
-### Which Snippet to Use as Template?
-
-When using `zed_snippets` template source, the tool looks for a snippet named exactly `boilerplate` (case-insensitive) in `~/.config/zed/snippets/c++.json`.
-
-Make sure your main boilerplate template has this name in your `cpp.json`.
-
----
-
-## 💡 Pro-Tips
-
-### 1. Blazing Fast Test Runs on macOS (Drop Latency to 3-4ms)
-Since this tool is designed for macOS, security scans (`syspolicyd`) can check newly compiled binaries and add ~200ms of lag on the first run. To drop execution time from 200ms down to **3–4ms**:
-1. Open **System Settings** -> **Privacy & Security** -> **Developer Tools**.
-2. Click `+` and add **Zed** and whatever terminal emulator you use (e.g. *Terminal*, *iTerm2*). Toggle them **ON**.
-3. Now go to **Privacy & Security** -> **Full Disk Access**, and also add both **Zed** and your terminal emulator there.
-
-![macOS Developer Tools and Full Disk Access Settings](macos_developer_tools_settings.png)
-
-### 2. Fast Policy-Based Data Structures (PBDS) on macOS (Clang)
-Since GCC can be slow to set up or run on macOS, you can use Clang while retaining GCC-like features (like `#include <bits/stdc++.h>` and Policy-Based Data Structures):
-* Clone the [cp_with_clang](https://github.com/prsweet/cp_with_clang.git) helper repository.
-* It sets up the desired environment for Apple Clang (including `<bits/stdc++.h>` and Policy-Based DS).
-
-### 3. Precompiling Headers (PCH) for C++ (Compiles in ~0.20s)
-Compiling `#include <bits/stdc++.h>` from scratch parses over 100K lines of code, taking 1.5s to 3.0s per compile. By using a Precompiled Header (PCH), compilation drops to under **0.20 seconds**.
-
-#### Step A: Generate the PCH file locally
-Compile `stdc++.h` into a precompiled binary matching the exact C++ standard version and compiler you intend to use.
-
-For **Clang / clang++** (macOS Default):
+**For Clang (macOS Default):**
 ```bash
-# Compile stdc++.h into stdc++.h.pch
 clang++ -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.pch
 ```
-
-For **GCC / g++** (Homebrew):
-```bash
-# Compile stdc++.h into stdc++.h.gch
-g++-15 -std=c++23 -O2 -x c++-header /usr/local/include/bits/stdc++.h -o /usr/local/include/bits/stdc++.h.gch
+Then update your `LANGUAGES` config in `main.py`:
+```python
+"compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch", "-include-pch", "/usr/local/include/bits/stdc++.h.pch"],
 ```
 
-#### Step B: Update your `LANGUAGES` config in `main.py`
-Open your `main.py` and modify the compile list for C++ to pass the PCH include flags:
-
-* **For Clang (`clang++` or standard Mac `g++`)**:
-  Add `"-include-pch"` and the path to your `.pch` file:
-  ```python
-      "cpp23": {
-          "compile": [
-              "g++",
-              "-std=c++23",
-              "-O2",
-              "-Wall",
-              "-Wextra",
-              "-Winvalid-pch",
-              "-include-pch",
-              "/usr/local/include/bits/stdc++.h.pch"
-          ],
-          ...
-  ```
-  *(Note: The `-Winvalid-pch` flag is highly recommended, as it will issue warnings in your terminal if your PCH goes out of sync with your compilation flags).*
-
-* **For GCC (`g++` via Homebrew)**:
-  GCC automatically searches for `.gch` files inside the same directory as the included header, so you only need to ensure the directory containing your `.gch` file is searched:
-  ```python
-      "cpp23": {
-          "compile": ["g++-15", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch"],
-          ...
-  ```
+### 3. Sync Templates Between Zed and VS Code
+If you use both IDEs, create a symlink to keep your templates synchronized.
+**Option:** Make Zed use VS Code's `cpp.json`:
+```bash
+ln -sf ~/Library/Application\ Support/Code/User/snippets/cpp.json ~/.config/zed/snippets/c++.json
+```
+Ensure your main boilerplate snippet is named exactly `"boilerplate"`. Use the included `sync_boilerplate_snippet.py` script to do this automatically!
