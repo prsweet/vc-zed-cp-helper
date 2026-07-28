@@ -210,7 +210,12 @@ macOS security scans (`syspolicyd`) add ~200ms of lag when running newly compile
 
 ![macOS Settings](macos_developer_tools_settings.png)
 
-### 2. Ultra-Fast Precompiled Headers (PCH) 🔥
+### 2. Fast Policy-Based Data Structures (PBDS) on macOS (Clang) 🌲
+Since GCC can be slow to set up or run on macOS, you can use Clang while retaining GCC-like features (like `#include <bits/stdc++.h>` and Policy-Based Data Structures):
+* Clone the [cp_with_clang](https://github.com/prsweet/cp_with_clang.git) helper repository.
+* It sets up the desired environment for Apple Clang (including `<bits/stdc++.h>` and Policy-Based DS).
+
+### 3. Ultra-Fast Precompiled Headers (PCH) 🔥
 Compiling `#include <bits/stdc++.h>` takes 1.5s–3.0s per compile. Using a Precompiled Header drops this to **under 0.20 seconds**.
 
 **For Clang (macOS Default):**
@@ -222,7 +227,7 @@ Then update your `LANGUAGES` config in `main.py`:
 "compile": ["g++", "-std=c++23", "-O2", "-Wall", "-Wextra", "-Winvalid-pch", "-include-pch", "/usr/local/include/bits/stdc++.h.pch"],
 ```
 
-### 3. Sync Templates Between Zed and VS Code
+### 4. Sync Templates Between Zed and VS Code
 If you use both IDEs, create a symlink to keep your templates synchronized.
 **Option:** Make Zed use VS Code's `cpp.json`:
 ```bash
