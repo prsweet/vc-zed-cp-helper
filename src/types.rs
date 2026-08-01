@@ -1,9 +1,8 @@
 use std::{env::current_dir, path::PathBuf};
 use color_eyre::Result;
 
-use crossterm::event::{self, Event, KeyCode};
-use ratatui::{Frame, layout::{Alignment::{Center, Left, Right}, Constraint::{self, Percentage}, Direction::{Horizontal, Vertical}, Layout}, style::{Color, Style}, widgets::{Block, BorderType, Borders, Padding, Paragraph}};
-use tui_textarea::{Input, TextArea};
+use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout}, style::{Color, Modifier, Style}, widgets::{Block, Borders, Padding, Paragraph}};
+use ratatui_textarea::{TextArea};
 
 pub struct TestCase {
     pub input: String,
@@ -73,7 +72,8 @@ impl Helper {
             let tc_area = testcase_block[i];
 
             let outer_block = Block::default()
-                .title(format!(" TestCase: {} ", i + 1));
+                .borders(Borders::TOP)
+                .title(format!("TestCase: {} ", i + 1));
                 // .borders(Borders::ALL)
 
             let inner_block = outer_block.inner(tc_area);
@@ -161,7 +161,30 @@ impl Helper {
     }
 
     pub fn update_style(&mut self) {
-        
+        for (i, area) in self.case_areas.iter_mut().enumerate() {
+            let border_color = if i == self.active_area {
+                Color::Green
+            } else { 
+                Color::Reset
+            };
+
+            let title = if i % 2 == 0 { " Input " } else { " Expected " };
+            
+            let cursor_style = if i == self.active_area {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            area.set_cursor_style(cursor_style);
+
+            area.set_block(
+                Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .title_alignment(Right)
+                    .border_style(border_color)
+            );
+        }
     }
 
     pub fn handle_event(&mut self, event: Event) -> Result<bool> {

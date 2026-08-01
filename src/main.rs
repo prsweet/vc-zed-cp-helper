@@ -1,7 +1,5 @@
 use std::time::Duration;
-
-use crossterm::event;
-use ratatui::DefaultTerminal;
+use ratatui::{DefaultTerminal, crossterm::event};
 
 use crate::types::*;
 
