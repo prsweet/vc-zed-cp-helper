@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use color_eyre::Result;
-use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout}, style::{Color, Modifier, Style}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
+use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
 
 use ratatui_textarea::{TextArea};
 use serde::Deserialize;
@@ -40,25 +40,48 @@ fn block(title: Option<&str>) -> Block<'static> {
 }
 
 pub struct Helper {
+    pub scroll_offset: usize,
     pub dir_terminal: crate::dir_terminal::DirTerminal,
     pub active_problem: Option<ActiveProblem>,
     pub input_mode: InputMode,
     pub case_areas: Vec<TextArea<'static>>,
-    pub active_area: usize
+    pub active_area: usize,
+    pub click_zones: Vec<Rect>
 }
 
 impl Helper {
     pub fn new(intitial_dir: PathBuf) -> Self {
         Self {
+            scroll_offset: 0,
             dir_terminal: DirTerminal::new(intitial_dir),
             active_problem: None,
             input_mode: InputMode::Normal,
             case_areas: Vec::new(),
-            active_area: 0
+            active_area: 0,
+            click_zones: Vec::new()
         }
     }
 
-    pub fn draw(&self, frame: &mut Frame) {
+    pub fn draw_cal(&mut self, available_height: u16) -> usize {
+        let total_tc = self.case_areas.len()/2;
+        if total_tc == 0 { return 0; };
+
+        let visible_tc = (available_height/15).max(1) as usize;
+
+        if matches!(self.input_mode, InputMode::Editing) {
+            let active_tc = self.active_area/2;
+
+            if active_tc < self.scroll_offset {
+                self.scroll_offset = active_tc;
+            } else if active_tc >= self.scroll_offset + visible_tc {
+                self.scroll_offset = active_tc - visible_tc + 1;
+            }
+        }
+
+        visible_tc
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
         let master_border = block(Some(" Zed CP Helper "))
@@ -120,10 +143,17 @@ impl Helper {
         }
 
         let testcase_area = divisions[2];
-
         let num_testcase = self.case_areas.len()/2;
+        let visible_cases = self.draw_cal(testcase_area.height);
+
+        let max_offset = num_testcase.saturating_sub(visible_cases);
+        let cur_offset = self.scroll_offset.min(max_offset);
+        let draw_cases = visible_cases.min(num_testcase - cur_offset);
+
+        self.click_zones.clear();
+
         let mut constratints = Vec::new();
-        for _ in 0..num_testcase {
+        for _ in 0..draw_cases {
             constratints.push(Constraint::Length(15));
         }
 
@@ -132,11 +162,12 @@ impl Helper {
             .constraints(constratints)
             .split(testcase_area);
 
-        for i in 0..num_testcase {
+        for i in 0..draw_cases {
+            let idx = cur_offset + i;
             let tc_area = testcases_card[i];
             let tc_block = Block::default()
                 .borders(Borders::TOP)
-                .title(format!("TestCase: {} ", i + 1));
+                .title(format!("TestCase: {} ", idx + 1));
             let tc_inner = tc_block.inner(tc_area);
             frame.render_widget(tc_block, tc_area);
 
@@ -160,8 +191,8 @@ impl Helper {
 
             match self.input_mode {
                 InputMode::Editing => {
-                    let input_area = &self.case_areas[i*2];
-                    let expected_area = &self.case_areas[i*2 + 1]; // will see there's & required
+                    let input_area = &self.case_areas[idx*2];
+                    let expected_area = &self.case_areas[idx*2 + 1]; // will see there's & required
 
                     frame.render_widget(input_area, input_division[0]);
                     frame.render_widget(expected_area, result_division[0]);
@@ -170,8 +201,8 @@ impl Helper {
                     frame.render_widget(got_panel, result_division[1]);
                 },
                 _ => {
-                    let input_text = self.case_areas[i*2].lines().join("\n");
-                    let expected_text = self.case_areas[i*2 + 1].lines().join("\n");
+                    let input_text = self.case_areas[idx*2].lines().join("\n");
+                    let expected_text = self.case_areas[idx*2 + 1].lines().join("\n");
                     
                     let input_panel = Paragraph::new(input_text).block(input_block).wrap(Wrap { trim: false });
                     frame.render_widget(input_panel, input_division[0]);
@@ -190,7 +221,17 @@ impl Helper {
     }
 
     pub fn cmd_add(&mut self) {
-        
+        let mut input = TextArea::default();
+        input.set_block(block(Some(" Input ")));
+        self.case_areas.push(input);
+
+        let mut expected = TextArea::default();
+        expected.set_block(block(Some(" Expected ")));
+        self.case_areas.push(expected);
+
+        self.active_area = self.case_areas.len() - 2;
+        self.input_mode = InputMode::Editing;
+        self.update_style();
     }
 
     pub fn cmd_submit(&mut self) {
@@ -198,30 +239,18 @@ impl Helper {
     }
 
     pub fn cmd_edit(&mut self) {
-        self.input_mode = InputMode::Editing;
-        self.case_areas.clear();
-        self.active_area = 0;
-
-        let input_block = block(Some(" Input "));
-        let expected_block = block(Some(" Expected "));
-
-        let test_cases = 2;
-        for _ in 0..test_cases {
-            let mut input = TextArea::default();
-            input.set_block(input_block.clone());
-            self.case_areas.push(input);
-
-            let mut expected = TextArea::default();
-            expected.set_block(expected_block.clone());
-            self.case_areas.push(expected);
+        if !self.case_areas.is_empty() {
+            self.input_mode = InputMode::Editing;
+            self.active_area = 0;
+            self.update_style();
         }
-        self.update_style();
         // todo: first get the existing testcase in buffer and then edit it using handleediting
         // todo: taking the edit and pasting the thing in the actual testcase file
     }
 
-    pub fn cmd_help(&self) {
-        
+    pub fn cmd_help(&mut self) {
+        let help_text = "KEYBINDINGS: [r] Run | [e] Edit | [a] Add | [d] Directory | [q] Quit";
+        self.dir_terminal.output = Some(help_text.to_string());
     }
 
     pub fn handle_receving(&mut self, problem: ActiveProblem) {
