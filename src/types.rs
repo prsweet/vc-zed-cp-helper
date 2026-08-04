@@ -1,23 +1,22 @@
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 use color_eyre::Result;
-use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
+use ratatui::{Frame, crossterm::event::{Event, KeyCode, MouseEventKind}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
 
 use ratatui_textarea::{TextArea};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::dir_terminal::DirTerminal;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TestCase {
     pub input: String,
     #[serde(rename = "output")]
     pub expected_output: String
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ActiveProblem {
     pub name: String,
-    group: String,
     url: String,
     #[serde(rename = "timeLimit")]
     time_limit: u32,
@@ -66,7 +65,7 @@ impl Helper {
         let total_tc = self.case_areas.len()/2;
         if total_tc == 0 { return 0; };
 
-        let visible_tc = (available_height/15).max(1) as usize;
+        let visible_tc = ((available_height + 14)/15) as usize;
 
         if matches!(self.input_mode, InputMode::Editing) {
             let active_tc = self.active_area/2;
@@ -131,8 +130,7 @@ impl Helper {
             }
         }
 
-        let msg_block = Block::default()
-            .borders(Borders::ALL)
+        let msg_block = block(None)
             .border_style(Color::Cyan);
         
         if !msg.is_empty() {
@@ -234,6 +232,30 @@ impl Helper {
         self.update_style();
     }
 
+    pub fn save_testcases(&self) {
+        if let Some(problem) = &self.active_problem {
+            let mut updated_problem = problem.clone();
+            
+            let mut updated_test = Vec::new();
+            let num_testcases = self.case_areas.len()/2;
+
+            for i in 0..num_testcases {
+                updated_test.push(TestCase {
+                    input: self.case_areas[i*2].lines().join("\n") + "\n",
+                    expected_output: self.case_areas[i*2 + 1].lines().join("\n") + "\n"
+                });
+            }
+            
+            updated_problem.test_cases = updated_test;
+
+            if let Ok(json_str) = serde_json::to_string_pretty(&updated_problem) {
+                let file_name = problem.name.replace(" ", "_").replace(".", "");
+                let file_path = self.dir_terminal.cur_dir.join(format!("{}.json", file_name));
+                let _ = fs::write(file_path, json_str);
+            }
+        }
+    }
+
     pub fn cmd_submit(&mut self) {
         
     }
@@ -254,6 +276,7 @@ impl Helper {
     }
 
     pub fn handle_receving(&mut self, problem: ActiveProblem) {
+        self.active_problem = Some(problem.clone());
         self.case_areas.clear();
         self.active_area = 0;
 
@@ -271,6 +294,7 @@ impl Helper {
 
         self.update_style();
         self.input_mode = InputMode::Normal;
+        self.save_testcases();
     }
 
     pub fn update_style(&mut self) {
@@ -304,7 +328,7 @@ impl Helper {
                 InputMode::Editing => {
                     match key.code {
                         KeyCode::Esc => {
-                            self.case_areas.clear();
+                            self.save_testcases();
                             self.input_mode = InputMode::Normal;
                             return Ok(false);
                         },
@@ -337,6 +361,21 @@ impl Helper {
                     }
                 }
             };
+        } else if let Event::Mouse(mouse) = event {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    let total_cases = self.case_areas.len()/2;
+                    if self.scroll_offset + 1 < total_cases {
+                        self.scroll_offset += 1;
+                    }
+                },
+                MouseEventKind::ScrollUp => {
+                    if self.scroll_offset > 0 {
+                        self.scroll_offset -= 1;
+                    }
+                },
+                _ => {}
+            }
         }
         Ok(false)
     }

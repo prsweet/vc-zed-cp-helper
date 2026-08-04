@@ -1,0 +1,39 @@
+{
+  "name": "A. Watermelon",
+  "url": "https://codeforces.com",
+  "timeLimit": 1000,
+  "tests": [
+    {
+      "input": "8\n\n",
+      "output": "YES\n\n"
+    },
+    {
+      "input": "5\n\n",
+      "output": "NO\n\n"
+    },
+    {
+      "input": "100\n\n",
+      "output": "YES\n\n"
+    },
+    {
+      "input": "\n",
+      "output": "\n"
+    },
+    {
+      "input": "\n",
+      "output": "\n"
+    },
+    {
+      "input": "\n",
+      "output": "\n"
+    },
+    {
+      "input": "\n",
+      "output": "\n"
+    },
+    {
+      "input": "\n",
+      "output": "\n"
+    }
+  ]
+}

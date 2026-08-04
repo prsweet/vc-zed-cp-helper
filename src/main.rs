@@ -1,5 +1,5 @@
-use std::{env, path::PathBuf, time::Duration};
-use ratatui::{DefaultTerminal, crossterm::event};
+use std::{env, io::stdout, path::PathBuf, time::Duration};
+use ratatui::{DefaultTerminal, crossterm::{event::{self, DisableMouseCapture, EnableMouseCapture}, execute}};
 use std::{sync::mpsc, thread};
 use tiny_http::{Response, Server};
 
@@ -13,6 +13,8 @@ fn main() -> color_eyre::Result<()>
     color_eyre::install()?;
     let mut terminal = ratatui::init();
 
+    let _ = execute!(stdout(), EnableMouseCapture);
+
     let initial_dir = match env::args().nth(1) {
         Some(path) => PathBuf::from(path),
         None => env::current_dir().unwrap_or_default()
@@ -20,6 +22,8 @@ fn main() -> color_eyre::Result<()>
     
     let mut helper = Helper::new(initial_dir);
     let result = run_app(&mut terminal, &mut helper);
+
+    let _ = execute!(stdout(), DisableMouseCapture);
 
     ratatui::restore();
     result
