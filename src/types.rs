@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{boxed, fs, path::PathBuf, process::id};
 use color_eyre::Result;
 use ratatui::{Frame, crossterm::event::{Event, KeyCode, MouseEventKind}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
 
@@ -45,7 +45,8 @@ pub struct Helper {
     pub input_mode: InputMode,
     pub case_areas: Vec<TextArea<'static>>,
     pub active_area: usize,
-    pub click_zones: Vec<Rect>
+    pub click_zones: Vec<Rect>,
+    pub inner_scrolls: Vec<u16>,
 }
 
 impl Helper {
@@ -57,27 +58,21 @@ impl Helper {
             input_mode: InputMode::Normal,
             case_areas: Vec::new(),
             active_area: 0,
-            click_zones: Vec::new()
+            click_zones: Vec::new(),
+            inner_scrolls: Vec::new()
         }
     }
 
-    pub fn draw_cal(&mut self, available_height: u16) -> usize {
-        let total_tc = self.case_areas.len()/2;
-        if total_tc == 0 { return 0; };
-
-        let visible_tc = ((available_height + 14)/15) as usize;
-
+    pub fn draw_cal(&mut self) {
         if matches!(self.input_mode, InputMode::Editing) {
             let active_tc = self.active_area/2;
 
             if active_tc < self.scroll_offset {
                 self.scroll_offset = active_tc;
-            } else if active_tc >= self.scroll_offset + visible_tc {
-                self.scroll_offset = active_tc - visible_tc + 1;
+            } else if active_tc >= self.scroll_offset + 3 /* 3 is the testcase visible at a time */ {
+                self.scroll_offset = active_tc - 2;
             }
         }
-
-        visible_tc
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -142,9 +137,11 @@ impl Helper {
 
         let testcase_area = divisions[2];
         let num_testcase = self.case_areas.len()/2;
-        let visible_cases = self.draw_cal(testcase_area.height);
+        let visible_cases = 3;
+        self.draw_cal();
 
         let max_offset = num_testcase.saturating_sub(visible_cases);
+        self.scroll_offset = self.scroll_offset.min(max_offset);
         let cur_offset = self.scroll_offset.min(max_offset);
         let draw_cases = visible_cases.min(num_testcase - cur_offset);
 
@@ -152,7 +149,7 @@ impl Helper {
 
         let mut constratints = Vec::new();
         for _ in 0..draw_cases {
-            constratints.push(Constraint::Length(15));
+            constratints.push(Constraint::Ratio(1, draw_cases as u32));
         }
 
         let testcases_card = Layout::default()
@@ -183,6 +180,10 @@ impl Helper {
                     Constraint::Percentage(50)
                 ]).split(input_division[1]);
 
+            self.click_zones.push(input_division[0]);
+            self.click_zones.push(result_division[0]);
+            self.click_zones.push(result_division[1]);
+
             let input_block = block(Some(" Input ")).title_alignment(Right);
             let expected_block = block(Some(" Expected ")).title_alignment(Right);
             let got_block = block(Some(" Got ")).title_alignment(Right);
@@ -201,12 +202,22 @@ impl Helper {
                 _ => {
                     let input_text = self.case_areas[idx*2].lines().join("\n");
                     let expected_text = self.case_areas[idx*2 + 1].lines().join("\n");
+
+                    let in_lines = self.case_areas[idx*2].lines().len() as u16;
+                    let exp_lines = self.case_areas[idx*2+1].lines().len() as u16;
+
+                    self.inner_scrolls[idx*3] = self.inner_scrolls[idx * 3].min(in_lines);
+                    self.inner_scrolls[idx*3 + 1] = self.inner_scrolls[idx * 3 + 1].min(exp_lines);
+
+                    let input_scroll = self.inner_scrolls[idx * 3];
+                    let expected_scroll = self.inner_scrolls[idx * 3 + 1];
+                    let got_scroll = self.inner_scrolls[idx * 3 + 2];
                     
-                    let input_panel = Paragraph::new(input_text).block(input_block).wrap(Wrap { trim: false });
+                    let input_panel = Paragraph::new(input_text).block(input_block).wrap(Wrap { trim: false }).scroll((input_scroll, 0));
                     frame.render_widget(input_panel, input_division[0]);
-                    let expected_panel = Paragraph::new(expected_text).block(expected_block).wrap(Wrap { trim: false });
+                    let expected_panel = Paragraph::new(expected_text).block(expected_block).wrap(Wrap { trim: false }).scroll((expected_scroll, 0));
                     frame.render_widget(expected_panel, result_division[0]);
-                    let got_panel = Paragraph::new("Run the case to get the results").block(got_block).wrap(Wrap { trim: false });
+                    let got_panel = Paragraph::new("Run the case to get the results").block(got_block).wrap(Wrap { trim: false }).scroll((got_scroll, 0));
                     frame.render_widget(got_panel, result_division[1]);
                 }
             }
@@ -230,6 +241,9 @@ impl Helper {
         self.active_area = self.case_areas.len() - 2;
         self.input_mode = InputMode::Editing;
         self.update_style();
+        self.inner_scrolls.push(0);
+        self.inner_scrolls.push(0);
+        self.inner_scrolls.push(0);
     }
 
     pub fn save_testcases(&self) {
@@ -279,6 +293,7 @@ impl Helper {
         self.active_problem = Some(problem.clone());
         self.case_areas.clear();
         self.active_area = 0;
+        self.inner_scrolls = vec![0; problem.test_cases.len() * 3];
 
         for tc in problem.test_cases.iter() {
             let mut input = TextArea::default();
@@ -362,15 +377,31 @@ impl Helper {
                 }
             };
         } else if let Event::Mouse(mouse) = event {
+            let mut hovered_box_id = None;
+
+            for (i, rect) in self.click_zones.iter().enumerate() {
+                if mouse.column >= rect.x && mouse.column < rect.x + rect.width && mouse.row >= rect.y && mouse.row < rect.y + rect.height {
+                    let tc_idx = i/3;
+                    let box_type = i % 3;
+                    let idx = self.scroll_offset + tc_idx;
+
+                    hovered_box_id = Some(idx * 3 + box_type);
+                    break;
+                }
+            }
+            
             match mouse.kind {
                 MouseEventKind::ScrollDown => {
-                    let total_cases = self.case_areas.len()/2;
-                    if self.scroll_offset + 1 < total_cases {
+                    if let Some(box_id) = hovered_box_id {
+                        self.inner_scrolls[box_id] += 1;
+                    } else if self.scroll_offset + 1 < self.case_areas.len() {
                         self.scroll_offset += 1;
                     }
                 },
                 MouseEventKind::ScrollUp => {
-                    if self.scroll_offset > 0 {
+                    if let Some(box_id) = hovered_box_id && self.inner_scrolls[box_id] > 0 {
+                        self.inner_scrolls[box_id] -= 1;
+                    } else if self.scroll_offset > 0 {
                         self.scroll_offset -= 1;
                     }
                 },
