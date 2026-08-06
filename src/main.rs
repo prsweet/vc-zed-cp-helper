@@ -5,7 +5,7 @@ use tiny_http::{Response, Server};
 
 use crate::helper::*;
 mod helper;
-mod dir_terminal;
+mod components;
 
 fn main() -> color_eyre::Result<()>
 {
@@ -69,10 +69,6 @@ pub fn spawn_server() -> mpsc::Receiver<ActiveProblem>
                 match problem {
                     Ok(send_problem) => { let _ = tx.send(send_problem); },
                     Err(e) => eprintln!("Failed to parse JSON: {}", e)
-                }
-                
-                if let Ok(problem) = serde_json::from_str::<ActiveProblem>(&content) {
-                    let _ = tx.send(problem);
                 }
             }
 

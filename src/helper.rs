@@ -1,15 +1,12 @@
-use core::panic::PanicInfo;
-use std::{fs, num, path::PathBuf};
+use std::{fs, path::PathBuf};
 use color_eyre::Result;
-use ratatui::{Frame, crossterm::event::{Event, KeyCode, MouseEventKind}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
+use ratatui::{Frame, crossterm::event::{Event, KeyCode, MouseEventKind}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Left, Right}, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap}};
 
-use ratatui_textarea::{TextArea};
 use serde::{Deserialize, Serialize};
-
-use crate::dir_terminal::DirTerminal;
+use crate::components::{dir_terminal::DirTerminal, testcase::{ActiveBox, TestCase}};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct TestCase {
+pub struct ReceivingTestCase {
     pub input: String,
     #[serde(rename = "output")]
     pub expected_output: String
@@ -22,7 +19,7 @@ pub struct ActiveProblem {
     #[serde(rename = "timeLimit")]
     time_limit: u32,
     #[serde(rename = "tests")]
-    test_cases: Vec<TestCase>
+    test_cases: Vec<ReceivingTestCase>
 }
 
 pub enum InputMode {
@@ -37,6 +34,8 @@ pub fn block(title: Option<&str>) -> Block<'static> {
         .title(if_title.to_string())
         .borders(Borders::ALL)
         .bold()
+        .title_style(Color::White)
+        .border_type(BorderType::Rounded)
         .padding(Padding::symmetric(1, 0))
 }
 
@@ -45,12 +44,9 @@ pub struct Helper {
     pub dir_terminal: DirTerminal,
     pub active_problem: Option<ActiveProblem>,
     pub input_mode: InputMode,
-    pub case_areas: Vec<TextArea<'static>>,
     pub active_area: usize,
-    pub click_zones: Vec<Rect>,
-    pub inner_vscrolls: Vec<u16>,
-    pub inner_hscrolls: Vec<u16>,
-    pub hovered_box_id: Option<usize>
+    pub testcases: Vec<TestCase>,
+    pub active_box: ActiveBox
 }
 
 impl Helper {
@@ -60,23 +56,18 @@ impl Helper {
             dir_terminal: DirTerminal::new(intitial_dir),
             active_problem: None,
             input_mode: InputMode::Normal,
-            case_areas: Vec::new(),
             active_area: 0,
-            click_zones: Vec::new(),
-            inner_vscrolls: Vec::new(),
-            inner_hscrolls: Vec::new(),
-            hovered_box_id: None
+            testcases: Vec::new(),
+            active_box: ActiveBox::None
         }
     }
 
     pub fn draw_cal(&mut self) {
         if matches!(self.input_mode, InputMode::Editing) {
-            let active_tc = self.active_area/2;
-
-            if active_tc < self.scroll_offset {
-                self.scroll_offset = active_tc;
-            } else if active_tc >= self.scroll_offset + 3 /* 3 is the testcase visible at a time */ {
-                self.scroll_offset = active_tc - 2;
+            if self.active_area < self.scroll_offset {
+                self.scroll_offset = self.active_area;
+            } else if self.active_area >= self.scroll_offset + 3 /* 3 is the testcase visible at a time */ {
+                self.scroll_offset = self.active_area - 2;
             }
         }
     }
@@ -85,7 +76,6 @@ impl Helper {
         let area = frame.area();
 
         let master_border = block(Some(" Zed CP Helper "))
-            .title_alignment(Center)
             .border_style(Color::Yellow);
         let main_area = master_border.inner(area);
         frame.render_widget(master_border, area);
@@ -117,7 +107,7 @@ impl Helper {
                 let mut dir_box = self.dir_terminal.input_area.clone();
                 let prompt = format!(" {} > ", cur_dir_str);
                     
-                dir_box.set_block(dir_block.title(prompt).border_style(Color::Magenta));
+                dir_box.set_block(dir_block.title(prompt).border_style(Color::Magenta).title_alignment(Right));
                 frame.render_widget(&dir_box, dir_area);
             },
             _ => {
@@ -125,7 +115,7 @@ impl Helper {
                     format!(" {} > ", cur_dir_str)
                 };
                 let dir_panel = Paragraph::new(display_str)
-                    .block(dir_block.title(" Working Directory (press d to edit) ").border_style(Color::Magenta))
+                    .block(dir_block.title(" Working Directory ").title_alignment(Right).border_style(Color::Magenta))
                     .wrap(Wrap { trim: false });
                 frame.render_widget(dir_panel, dir_area);
             }
@@ -142,7 +132,7 @@ impl Helper {
         }
 
         let testcase_area = divisions[2];
-        let num_testcase = self.case_areas.len()/2;
+        let num_testcase = self.testcases.len();
         let visible_cases = 3;
         self.draw_cal();
 
@@ -151,95 +141,17 @@ impl Helper {
         let cur_offset = self.scroll_offset.min(max_offset);
         let draw_cases = visible_cases.min(num_testcase - cur_offset);
 
-        self.click_zones.clear();
+        if draw_cases > 0 {
+            let constraints = vec![Constraint::Ratio(1, draw_cases as u32); draw_cases];
+            let rows = Layout::vertical(constraints).split(testcase_area);
 
-        let mut constratints = Vec::new();
-        for _ in 0..draw_cases {
-            constratints.push(Constraint::Ratio(1, draw_cases as u32));
-        }
-
-        let testcases_card = Layout::default()
-            .direction(Vertical)
-            .constraints(constratints)
-            .split(testcase_area);
-
-        for i in 0..draw_cases {
-            let idx = cur_offset + i;
-            let tc_area = testcases_card[i];
-            let tc_block = Block::default()
-                .borders(Borders::TOP)
-                .title(format!("TestCase: {} ", idx + 1));
-            let tc_inner = tc_block.inner(tc_area);
-            frame.render_widget(tc_block, tc_area);
-
-            let input_division = Layout::default()
-                .direction(Vertical)
-                .constraints([
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50)
-                ]).split(tc_inner);
-
-            let result_division = Layout::default()
-                .direction(Horizontal)
-                .constraints([
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50)
-                ]).split(input_division[1]);
-
-            self.click_zones.push(input_division[0]);
-            self.click_zones.push(result_division[0]);
-            self.click_zones.push(result_division[1]);
-
-            let input_block = block(Some(" Input "))
-                .border_style(Color::Blue)
-                .title_style(Color::Reset)
-                .title_alignment(Right);
-            let expected_block = block(Some(" Expected "))
-                .border_style(Color::Blue)
-                .title_style(Color::Reset)
-                .title_alignment(Right);
-            let got_block = block(Some(" Got "))
-                .border_style(Color::Blue)
-                .title_style(Color::Reset)
-                .title_alignment(Right);
-
-            match self.input_mode {
-                InputMode::Editing => {
-                    let input_area = &self.case_areas[idx*2];
-                    let expected_area = &self.case_areas[idx*2 + 1]; // will see there's & required
-
-                    frame.render_widget(input_area, input_division[0]);
-                    frame.render_widget(expected_area, result_division[0]);
-
-                    let got_panel = Paragraph::new("got").block(got_block);
-                    frame.render_widget(got_panel, result_division[1]);
-                },
-                _ => {
-                    let input_text = self.case_areas[idx*2].lines().join("\n");
-                    let expected_text = self.case_areas[idx*2 + 1].lines().join("\n");
-
-                    let in_lines = self.case_areas[idx*2].lines().len() as u16;
-                    let exp_lines = self.case_areas[idx*2+1].lines().len() as u16;
-
-                    self.inner_vscrolls[idx*3] = self.inner_vscrolls[idx * 3].min(in_lines);
-                    self.inner_vscrolls[idx*3 + 1] = self.inner_vscrolls[idx * 3 + 1].min(exp_lines);
-
-                    let input_vscroll = self.inner_vscrolls[idx * 3];
-                    let expected_vscroll = self.inner_vscrolls[idx * 3 + 1];
-                    let got_vscroll = self.inner_vscrolls[idx * 3 + 2];
-                    let input_hscroll = self.inner_hscrolls[idx * 3];
-                    let expected_hscroll = self.inner_hscrolls[idx * 3 + 1];
-                    let got_hscroll = self.inner_hscrolls[idx * 3 + 2];
-                    
-                    let input_panel = Paragraph::new(input_text).block(input_block).scroll((input_vscroll, input_hscroll));
-                    frame.render_widget(input_panel, input_division[0]);
-                    let expected_panel = Paragraph::new(expected_text).block(expected_block).scroll((expected_vscroll, expected_hscroll));
-                    frame.render_widget(expected_panel, result_division[0]);
-                    let got_panel = Paragraph::new("Run the case to get the results").block(got_block).scroll((got_vscroll, got_hscroll));
-                    frame.render_widget(got_panel, result_division[1]);
-                }
+            for (i, tc_area) in rows.iter().copied().enumerate() {
+                let idx = self.scroll_offset + i;
+                let title = &format!("TestCase {} ", idx + 1);
+                let active_box = if idx == self.active_area { self.active_box } else { ActiveBox::None };
+                let is_editing = matches!(self.input_mode, InputMode::Editing) && idx == self.active_area;
+                self.testcases[idx].draw_tc(frame, tc_area, title, active_box, is_editing);
             }
-            
         }
     }
 
@@ -248,23 +160,11 @@ impl Helper {
     }
 
     pub fn cmd_add(&mut self) {
-        let mut input = TextArea::default();
-        input.set_block(block(Some(" Input ")));
-        self.case_areas.push(input);
-
-        let mut expected = TextArea::default();
-        expected.set_block(block(Some(" Expected ")));
-        self.case_areas.push(expected);
-
-        self.active_area = self.case_areas.len() - 2;
+        self.testcases.push(TestCase::new("", ""));
+        self.active_area = self.testcases.len().saturating_sub(1);
         self.input_mode = InputMode::Editing;
-        self.update_style();
-        self.inner_vscrolls.push(0);
-        self.inner_vscrolls.push(0);
-        self.inner_vscrolls.push(0);
-        self.inner_hscrolls.push(0);
-        self.inner_hscrolls.push(0);
-        self.inner_hscrolls.push(0);
+        self.active_box = ActiveBox::Input;
+        self.scroll_offset += 1;
     }
 
     pub fn save_testcases(&self) {
@@ -272,12 +172,10 @@ impl Helper {
             let mut updated_problem = problem.clone();
             
             let mut updated_test = Vec::new();
-            let num_testcases = self.case_areas.len()/2;
-
-            for i in 0..num_testcases {
-                updated_test.push(TestCase {
-                    input: self.case_areas[i*2].lines().join("\n") + "\n",
-                    expected_output: self.case_areas[i*2 + 1].lines().join("\n") + "\n"
+            for tc in &self.testcases {
+                updated_test.push(ReceivingTestCase {
+                    input: tc.inp_content.lines().join("\n"),
+                    expected_output: tc.exp_content.lines().join("\n")
                 });
             }
             
@@ -296,10 +194,10 @@ impl Helper {
     }
 
     pub fn cmd_edit(&mut self) {
-        if !self.case_areas.is_empty() {
+        if !self.testcases.is_empty() {
             self.input_mode = InputMode::Editing;
             self.active_area = 0;
-            self.update_style();
+            self.active_box = ActiveBox::Input;
         }
         // todo: first get the existing testcase in buffer and then edit it using handleediting
         // todo: taking the edit and pasting the thing in the actual testcase file
@@ -312,82 +210,16 @@ impl Helper {
 
     pub fn handle_receving(&mut self, problem: ActiveProblem) {
         self.active_problem = Some(problem.clone());
-        self.case_areas.clear();
+        self.testcases.clear();
         self.active_area = 0;
-        self.inner_vscrolls = vec![0; problem.test_cases.len() * 3];
-        self.inner_hscrolls = vec![0; problem.test_cases.len() * 3];
+        self.scroll_offset = 0;
 
         for tc in problem.test_cases.iter() {
-            let mut input = TextArea::default();
-            input.insert_str(&tc.input);
-            input.set_block(block(Some(" Input ")));
-            self.case_areas.push(input);
-
-            let mut expected = TextArea::default();
-            expected.insert_str(&tc.expected_output);
-            expected.set_block(block(Some(" Expected ")));
-            self.case_areas.push(expected);
+            self.testcases.push(TestCase::new(&tc.input, &tc.expected_output));
         }
 
-        self.update_style();
         self.input_mode = InputMode::Normal;
         self.save_testcases();
-    }
-
-    pub fn update_style(&mut self) {
-        for (i, area) in self.case_areas.iter_mut().enumerate() {
-            let border_color = if i == self.active_area {
-                Color::LightGreen
-            } else { 
-                Color::Blue
-            };
-
-            let title = if i % 2 == 0 { " Input " } else { " Expected " };
-            
-            let cursor_style = if i == self.active_area {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-            };
-            area.set_cursor_style(cursor_style);
-
-            area.set_block(
-                block(Some(title))
-                    .title_alignment(Right)
-                    .border_style(border_color)
-            );
-        }
-    }
-
-    pub fn cal_max_scroll(&mut self, is_vertical: bool, box_id: usize) -> u16 {
-        let tc_idx = box_id/3;
-        let box_type = box_id%3;
-
-        if is_vertical {
-            let total_lines = match box_type {
-                0 => self.case_areas[tc_idx*2].lines().len(),
-                1 => self.case_areas[tc_idx*2 + 1].lines().len(),
-                _ => 0
-            };
-            total_lines.saturating_sub(5) as u16
-        } else {
-            let line_len = match box_type {
-                0 => self.case_areas[tc_idx*2].lines().iter().map(|l| l.len()).max().unwrap_or(0),
-                1 => self.case_areas[tc_idx*2 + 1].lines().iter().map(|l| l.len()).max().unwrap_or(0),
-                _ => 0
-            };
-
-            let visibel_tc_idx = tc_idx.saturating_sub(self.scroll_offset);
-            let click_idx = visibel_tc_idx*3 + box_type;
-
-            let box_w = if click_idx < self.click_zones.len() {
-                self.click_zones[click_idx].width
-            } else {
-                30
-            };
-            
-            line_len.saturating_sub(box_w.saturating_sub(2) as usize) as u16
-        }
     }
 
     pub fn handle_event(&mut self, event: Event) -> Result<bool> {
@@ -401,14 +233,30 @@ impl Helper {
                             return Ok(false);
                         },
                         KeyCode::Tab => {
-                            self.active_area = (self.active_area + 1) % self.case_areas.len();
-                            self.update_style();
+                            match self.active_box {
+                                ActiveBox::Expected => {
+                                    self.active_area = (self.active_area + 1) % self.testcases.len();
+                                    self.active_box = ActiveBox::Input;
+                                },
+                                ActiveBox::Input => {
+                                    self.active_box = ActiveBox::Expected;
+                                },
+                                _ => {}
+                            }
                             return Ok(false);
                         }
                         _ => {}
                     }
 
-                    self.case_areas[self.active_area].input(event);
+                    match self.active_box {
+                        ActiveBox::Input => {
+                            self.testcases[self.active_area].inp_content.input(event);
+                        },
+                        ActiveBox::Expected => {
+                            self.testcases[self.active_area].exp_content.input(event);
+                        },
+                        _ => {}
+                    }
                 }
                 InputMode::Normal => {
                     match key.code {
@@ -419,19 +267,6 @@ impl Helper {
                         KeyCode::Char('e') => self.cmd_edit(),
                         KeyCode::Char('h') => self.cmd_help(),
                         KeyCode::Char('d') => { self.input_mode = InputMode::Directory; },
-                        KeyCode::Right => {
-                            if let Some(box_id) = self.hovered_box_id {
-                                let mx_scroll =  self.cal_max_scroll(false, box_id);
-                                if self.inner_hscrolls[box_id] < mx_scroll {
-                                    self.inner_hscrolls[box_id] += 1;
-                                }
-                            }
-                        },
-                        KeyCode::Left => {
-                            if let Some(box_id) = self.hovered_box_id && self.inner_hscrolls[box_id] > 0 {
-                                self.inner_hscrolls[box_id] -= 1;
-                            }
-                        }
                         _ => {}
                     }
                 },
@@ -443,53 +278,31 @@ impl Helper {
                 }
             };
         } else if let Event::Mouse(mouse) = event {
-            self.hovered_box_id = None;
-            for (i, rect) in self.click_zones.iter().enumerate() {
-                if mouse.column >= rect.x && mouse.column < rect.x + rect.width && mouse.row >= rect.y && mouse.row < rect.y + rect.height {
-                    let tc_idx = i/3;
-                    let box_type = i % 3;
-                    let idx = self.scroll_offset + tc_idx;
+            let draw_cases = 3.min(self.testcases.len().saturating_sub(self.scroll_offset));
+            let mut hovered_inside = false;
 
-                    self.hovered_box_id = Some(idx * 3 + box_type);
+            for i in 0..draw_cases {
+                let idx = self.scroll_offset + i;
+                if self.testcases[idx].handle_triggers(&mouse) {
+                    hovered_inside = true;
                     break;
                 }
             }
-            
-            match mouse.kind {
-                MouseEventKind::ScrollDown => {
-                    if let Some(box_id) = self.hovered_box_id {
-                        let mx_scroll =  self.cal_max_scroll(true, box_id);
-                        if self.inner_vscrolls[box_id] < mx_scroll {
-                            self.inner_vscrolls[box_id] += 1;
-                        }
-                    } else {
-                        let num_tc = self.case_areas.len()/2;
-                        if self.scroll_offset + 3 < num_tc {
+
+            if !hovered_inside {
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        if self.scroll_offset + 1 < self.testcases.len() {
                             self.scroll_offset += 1;
                         }
-                    }
-                },
-                MouseEventKind::ScrollUp => {
-                    if let Some(box_id) = self.hovered_box_id && self.inner_vscrolls[box_id] > 0 {
-                        self.inner_vscrolls[box_id] -= 1;
-                    } else if self.scroll_offset > 0 {
-                        self.scroll_offset -= 1;
-                    }
-                },
-                MouseEventKind::ScrollLeft => {
-                    if let Some(box_id) = self.hovered_box_id {
-                        let mx_scroll =  self.cal_max_scroll(false, box_id);
-                        if self.inner_hscrolls[box_id] < mx_scroll {
-                            self.inner_hscrolls[box_id] += 1;
+                    },
+                    MouseEventKind::ScrollUp => {
+                        if self.scroll_offset > 0 {
+                            self.scroll_offset -= 1;
                         }
-                    }
-                },
-                MouseEventKind::ScrollRight => {
-                    if let Some(box_id) = self.hovered_box_id && self.inner_hscrolls[box_id] > 0 {
-                        self.inner_hscrolls[box_id] -= 1;
-                    }
-                },
-                _ => {}
+                    },
+                    _ => {}
+                }
             }
         }
         Ok(false)
