@@ -1,4 +1,5 @@
-use std::{fs, path::PathBuf};
+use core::panic::PanicInfo;
+use std::{fs, num, path::PathBuf};
 use color_eyre::Result;
 use ratatui::{Frame, crossterm::event::{Event, KeyCode, MouseEventKind}, layout::{Constraint::{self}, Direction::{Horizontal, Vertical}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, Borders, Padding, Paragraph, Wrap}};
 
@@ -30,7 +31,7 @@ pub enum InputMode {
     Directory
 }
 
-fn block(title: Option<&str>) -> Block<'static> {
+pub fn block(title: Option<&str>) -> Block<'static> {
     let if_title = title.unwrap_or("");
     Block::default()
         .title(if_title.to_string())
@@ -41,7 +42,7 @@ fn block(title: Option<&str>) -> Block<'static> {
 
 pub struct Helper {
     pub scroll_offset: usize,
-    pub dir_terminal: crate::dir_terminal::DirTerminal,
+    pub dir_terminal: DirTerminal,
     pub active_problem: Option<ActiveProblem>,
     pub input_mode: InputMode,
     pub case_areas: Vec<TextArea<'static>>,
@@ -49,6 +50,7 @@ pub struct Helper {
     pub click_zones: Vec<Rect>,
     pub inner_vscrolls: Vec<u16>,
     pub inner_hscrolls: Vec<u16>,
+    pub hovered_box_id: Option<usize>
 }
 
 impl Helper {
@@ -62,7 +64,8 @@ impl Helper {
             active_area: 0,
             click_zones: Vec::new(),
             inner_vscrolls: Vec::new(),
-            inner_hscrolls: Vec::new()
+            inner_hscrolls: Vec::new(),
+            hovered_box_id: None
         }
     }
 
@@ -221,15 +224,18 @@ impl Helper {
                     self.inner_vscrolls[idx*3] = self.inner_vscrolls[idx * 3].min(in_lines);
                     self.inner_vscrolls[idx*3 + 1] = self.inner_vscrolls[idx * 3 + 1].min(exp_lines);
 
-                    let input_scroll = self.inner_vscrolls[idx * 3];
-                    let expected_scroll = self.inner_vscrolls[idx * 3 + 1];
-                    let got_scroll = self.inner_vscrolls[idx * 3 + 2];
+                    let input_vscroll = self.inner_vscrolls[idx * 3];
+                    let expected_vscroll = self.inner_vscrolls[idx * 3 + 1];
+                    let got_vscroll = self.inner_vscrolls[idx * 3 + 2];
+                    let input_hscroll = self.inner_hscrolls[idx * 3];
+                    let expected_hscroll = self.inner_hscrolls[idx * 3 + 1];
+                    let got_hscroll = self.inner_hscrolls[idx * 3 + 2];
                     
-                    let input_panel = Paragraph::new(input_text).block(input_block).scroll((input_scroll, 0));
+                    let input_panel = Paragraph::new(input_text).block(input_block).scroll((input_vscroll, input_hscroll));
                     frame.render_widget(input_panel, input_division[0]);
-                    let expected_panel = Paragraph::new(expected_text).block(expected_block).scroll((expected_scroll, 0));
+                    let expected_panel = Paragraph::new(expected_text).block(expected_block).scroll((expected_vscroll, expected_hscroll));
                     frame.render_widget(expected_panel, result_division[0]);
-                    let got_panel = Paragraph::new("Run the case to get the results").block(got_block).scroll((got_scroll, 0));
+                    let got_panel = Paragraph::new("Run the case to get the results").block(got_block).scroll((got_vscroll, got_hscroll));
                     frame.render_widget(got_panel, result_division[1]);
                 }
             }
@@ -256,6 +262,9 @@ impl Helper {
         self.inner_vscrolls.push(0);
         self.inner_vscrolls.push(0);
         self.inner_vscrolls.push(0);
+        self.inner_hscrolls.push(0);
+        self.inner_hscrolls.push(0);
+        self.inner_hscrolls.push(0);
     }
 
     pub fn save_testcases(&self) {
@@ -306,6 +315,7 @@ impl Helper {
         self.case_areas.clear();
         self.active_area = 0;
         self.inner_vscrolls = vec![0; problem.test_cases.len() * 3];
+        self.inner_hscrolls = vec![0; problem.test_cases.len() * 3];
 
         for tc in problem.test_cases.iter() {
             let mut input = TextArea::default();
@@ -349,6 +359,37 @@ impl Helper {
         }
     }
 
+    pub fn cal_max_scroll(&mut self, is_vertical: bool, box_id: usize) -> u16 {
+        let tc_idx = box_id/3;
+        let box_type = box_id%3;
+
+        if is_vertical {
+            let total_lines = match box_type {
+                0 => self.case_areas[tc_idx*2].lines().len(),
+                1 => self.case_areas[tc_idx*2 + 1].lines().len(),
+                _ => 0
+            };
+            total_lines.saturating_sub(5) as u16
+        } else {
+            let line_len = match box_type {
+                0 => self.case_areas[tc_idx*2].lines().iter().map(|l| l.len()).max().unwrap_or(0),
+                1 => self.case_areas[tc_idx*2 + 1].lines().iter().map(|l| l.len()).max().unwrap_or(0),
+                _ => 0
+            };
+
+            let visibel_tc_idx = tc_idx.saturating_sub(self.scroll_offset);
+            let click_idx = visibel_tc_idx*3 + box_type;
+
+            let box_w = if click_idx < self.click_zones.len() {
+                self.click_zones[click_idx].width
+            } else {
+                30
+            };
+            
+            line_len.saturating_sub(box_w.saturating_sub(2) as usize) as u16
+        }
+    }
+
     pub fn handle_event(&mut self, event: Event) -> Result<bool> {
         if let Event::Key(key) = event {
             match self.input_mode {
@@ -378,6 +419,19 @@ impl Helper {
                         KeyCode::Char('e') => self.cmd_edit(),
                         KeyCode::Char('h') => self.cmd_help(),
                         KeyCode::Char('d') => { self.input_mode = InputMode::Directory; },
+                        KeyCode::Right => {
+                            if let Some(box_id) = self.hovered_box_id {
+                                let mx_scroll =  self.cal_max_scroll(false, box_id);
+                                if self.inner_hscrolls[box_id] < mx_scroll {
+                                    self.inner_hscrolls[box_id] += 1;
+                                }
+                            }
+                        },
+                        KeyCode::Left => {
+                            if let Some(box_id) = self.hovered_box_id && self.inner_hscrolls[box_id] > 0 {
+                                self.inner_hscrolls[box_id] -= 1;
+                            }
+                        }
                         _ => {}
                     }
                 },
@@ -389,32 +443,50 @@ impl Helper {
                 }
             };
         } else if let Event::Mouse(mouse) = event {
-            let mut hovered_box_id = None;
-
+            self.hovered_box_id = None;
             for (i, rect) in self.click_zones.iter().enumerate() {
                 if mouse.column >= rect.x && mouse.column < rect.x + rect.width && mouse.row >= rect.y && mouse.row < rect.y + rect.height {
                     let tc_idx = i/3;
                     let box_type = i % 3;
                     let idx = self.scroll_offset + tc_idx;
 
-                    hovered_box_id = Some(idx * 3 + box_type);
+                    self.hovered_box_id = Some(idx * 3 + box_type);
                     break;
                 }
             }
             
             match mouse.kind {
                 MouseEventKind::ScrollDown => {
-                    if let Some(box_id) = hovered_box_id {
-                        self.inner_vscrolls[box_id] += 1;
-                    } else if self.scroll_offset + 1 < self.case_areas.len() {
-                        self.scroll_offset += 1;
+                    if let Some(box_id) = self.hovered_box_id {
+                        let mx_scroll =  self.cal_max_scroll(true, box_id);
+                        if self.inner_vscrolls[box_id] < mx_scroll {
+                            self.inner_vscrolls[box_id] += 1;
+                        }
+                    } else {
+                        let num_tc = self.case_areas.len()/2;
+                        if self.scroll_offset + 3 < num_tc {
+                            self.scroll_offset += 1;
+                        }
                     }
                 },
                 MouseEventKind::ScrollUp => {
-                    if let Some(box_id) = hovered_box_id && self.inner_vscrolls[box_id] > 0 {
+                    if let Some(box_id) = self.hovered_box_id && self.inner_vscrolls[box_id] > 0 {
                         self.inner_vscrolls[box_id] -= 1;
                     } else if self.scroll_offset > 0 {
                         self.scroll_offset -= 1;
+                    }
+                },
+                MouseEventKind::ScrollLeft => {
+                    if let Some(box_id) = self.hovered_box_id {
+                        let mx_scroll =  self.cal_max_scroll(false, box_id);
+                        if self.inner_hscrolls[box_id] < mx_scroll {
+                            self.inner_hscrolls[box_id] += 1;
+                        }
+                    }
+                },
+                MouseEventKind::ScrollRight => {
+                    if let Some(box_id) = self.hovered_box_id && self.inner_hscrolls[box_id] > 0 {
+                        self.inner_hscrolls[box_id] -= 1;
                     }
                 },
                 _ => {}
