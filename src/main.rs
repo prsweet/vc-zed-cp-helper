@@ -3,14 +3,12 @@ use ratatui::{DefaultTerminal, crossterm::{event::{self, DisableMouseCapture, En
 use std::{sync::mpsc, thread};
 use tiny_http::{Response, Server};
 
-use crate::types::*;
-
-mod types;
+use crate::helper::*;
+mod helper;
 mod dir_terminal;
 
 fn main() -> color_eyre::Result<()>
 {
-    color_eyre::install()?;
     let mut terminal = ratatui::init();
 
     let _ = execute!(stdout(), EnableMouseCapture);
