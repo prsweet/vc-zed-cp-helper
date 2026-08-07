@@ -1,7 +1,9 @@
 use std::{fs, path::PathBuf};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{Frame, crossterm::event::{KeyCode, KeyEvent}, layout::{Constraint::{Length, Min}, HorizontalAlignment::Right, Layout, Rect}, style::Color, widgets::{Paragraph, Wrap}};
 use ratatui_textarea::TextArea;
+
+use crate::components::block;
 
 pub struct DirTerminal {
     pub cur_dir: PathBuf,
@@ -17,6 +19,46 @@ impl DirTerminal {
             output: None
         }
     }
+
+    pub fn draw(&mut self, frame: &mut Frame, main_area: Rect, is_active: bool) -> Rect {
+        let cur_dir_str = self.cur_dir.to_string_lossy();
+        let msg = self.output.clone().unwrap_or_default();
+        let msg_height = if msg.is_empty() { 0 } else {
+            let w = main_area.width.saturating_sub(2).max(1);
+            let required = (msg.len() as u16 / w) + 1;
+            required + 2
+        };
+
+        let divisions = Layout::vertical([
+            Length(3),
+            Length(msg_height),
+            Min(0)
+        ]).split(main_area);
+        
+        let dir_block = block(None).border_style(Color::Magenta).title_alignment(Right);
+
+        if is_active {
+            let prompt = format!(" {} > ", cur_dir_str);
+            self.input_area.set_block(dir_block.title(prompt));
+            frame.render_widget(&self.input_area, divisions[0]);
+        } else {
+            let display_text = if msg.is_empty() { cur_dir_str.to_string() } else { format!(" {} > ", cur_dir_str) };
+            let dir_panel = Paragraph::new(display_text)
+                .block(dir_block.title(" Working Directory "))
+                .wrap(Wrap { trim: false });
+            frame.render_widget(dir_panel, divisions[0]);
+        }
+
+        if !msg.is_empty() {
+            let msg_block = block(None).border_style(Color::Cyan);
+            let msg_panel = Paragraph::new(msg)
+                .block(msg_block)
+                .wrap(Wrap { trim: false });
+            frame.render_widget(msg_panel, divisions[1]);
+        }
+
+        divisions[2]
+    } 
 
     pub fn handle_event(&mut self, key: KeyEvent) -> bool {
         match key.code {

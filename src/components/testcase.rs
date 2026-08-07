@@ -1,7 +1,7 @@
-use ratatui::{Frame, crossterm::event::{MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style}, text, widgets::{BorderType, Borders, Padding, Paragraph}};
+use ratatui::{Frame, crossterm::event::{MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{BorderType, Borders, Padding, Paragraph}};
 use ratatui_textarea::{TextArea};
 
-use crate::helper::block;
+use crate::components::block;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ActiveBox {
@@ -97,7 +97,7 @@ impl TestCase {
         }
     }
 
-    pub fn handle_triggers(&mut self, mouse: &MouseEvent) -> bool {
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
         let (state, v_lines, h_chars) = if self.input_box.check_hover(mouse) {
             (
                 &mut self.input_box,

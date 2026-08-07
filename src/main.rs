@@ -1,11 +1,10 @@
 use std::{env, io::stdout, path::PathBuf, time::Duration};
 use ratatui::{DefaultTerminal, crossterm::{event::{self, DisableMouseCapture, EnableMouseCapture}, execute}};
-use std::{sync::mpsc, thread};
-use tiny_http::{Response, Server};
 
-use crate::helper::*;
+use crate::{core::receiver, helper::Helper};
 mod helper;
 mod components;
+mod core;
 
 fn main() -> color_eyre::Result<()>
 {
@@ -29,7 +28,7 @@ fn main() -> color_eyre::Result<()>
 
 fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::Result<()>
 {
-    let receiver = spawn_server();
+    let receiver = receiver::spawn_server();
     
     loop {
         terminal.draw(|frame| {
@@ -38,7 +37,7 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
         
         if let Ok(new_problem) = receiver.try_recv() {
             helper.active_problem = Some(new_problem.clone());
-            helper.handle_receving(new_problem);
+            helper.wire_received_tc(new_problem);
         }
         
         if event::poll(Duration::from_millis(16))? {
@@ -48,32 +47,4 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
         }
     }
     Ok(())
-}
-
-
-
-pub fn spawn_server() -> mpsc::Receiver<ActiveProblem>
-{
-    let (tx, rx) = mpsc::channel();
-
-    thread::spawn(move || {
-        let server = Server::http("127.0.0.1:10043")
-            .expect("Could not connect to the port");
-
-        for mut request in server.incoming_requests() {
-            let mut content = String::new();
-
-            if request.as_reader().read_to_string(&mut content).is_ok() {
-                let problem = serde_json::from_str::<ActiveProblem>(&content);
-
-                match problem {
-                    Ok(send_problem) => { let _ = tx.send(send_problem); },
-                    Err(e) => eprintln!("Failed to parse JSON: {}", e)
-                }
-            }
-
-            let _ = request.respond(Response::empty(200));
-        }
-    });
-    rx
 }
