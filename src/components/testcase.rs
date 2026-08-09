@@ -143,7 +143,7 @@ impl TestCase {
                 }
             },
             MouseEventKind::ScrollRight => {
-                let mx_h = h_chars.saturating_sub(state.rect.width.saturating_sub(2));
+                let mx_h = h_chars.saturating_sub(state.rect.width.saturating_sub(4));
                 if state.scroll.1 < mx_h {
                     state.scroll.1 += 1;
                     return true;

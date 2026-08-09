@@ -1,13 +1,14 @@
-use std::{fs, path::{PathBuf}};
+use std::path::PathBuf;
 use color_eyre::Result;
 use ratatui::{Frame, crossterm::event::{Event, KeyCode}, style::{Color, Stylize}, widgets::{Block, BorderType, Borders, Padding}};
 
-use crate::{components::{block, dir_terminal::DirTerminal, tc_list::TestCaseList, testcase::TestCase}, core::{ActiveProblem, ReceivingTestCase}};
+use crate::{components::{block, dir_terminal::DirTerminal, tc_list::TestCaseList, testcase::TestCase}, core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, ReceivingTestCase, RunnerCommand, UserConfig, fs_ops::write_tc_file}};
 
 pub enum InputMode {
     Normal,
     Editing,
-    Directory
+    Directory,
+    Config
 }
 
 pub struct Helper {
@@ -60,15 +61,7 @@ impl Helper {
             }
             
             updated_problem.test_cases = updated_test;
-            self.write_tc_file(&updated_problem);
-        }
-    }
-
-    pub fn write_tc_file(&self, problem: &ActiveProblem) {
-        if let Ok(content) = serde_json::to_string_pretty(problem) {
-            let file_name = problem.name.replace(" ", "_").replace(".", "");
-            let file_path = self.dir_terminal.cur_dir.join(format!("{}.json", file_name));
-            let _ = fs::write(file_path, content);
+            write_tc_file(&updated_problem);
         }
     }
 
@@ -97,27 +90,29 @@ impl Helper {
         }
 
         self.input_mode = InputMode::Normal;
-        self.write_tc_file(&problem);
+        write_tc_file(&problem);
     }
 
-    pub fn handle_event(&mut self, event: Event) -> Result<bool> {
+    pub fn handle_event(&mut self, event: Event) -> Option<PassingCommand> {
         if let Event::Key(key) = event {
             match self.input_mode {
                 InputMode::Editing => {
                     if let KeyCode::Esc = key.code {
                         self.update_tc();
                         self.input_mode = InputMode::Normal;
-                        return Ok(false);
+                        // return Some(ToHelper(HelperCommand::EditTestCase));
+                        // here i guess we have to use fs_ops.rs, will see for it
                     }
                     self.tc_list.handle_key(event);
                 }
                 InputMode::Normal => {
                     match key.code {
-                        KeyCode::Char('q') => return Ok(true),
-                        KeyCode::Char('r') => self.cmd_run(),
+                        KeyCode::Char('q') => return Some(ToHelper(HelperCommand::Quit)),
+                        KeyCode::Char('r') => return Some(ToRunner(RunnerCommand::RunCode("()".to_string()))),
                         KeyCode::Char('a') => self.cmd_add(),
                         KeyCode::Char('s') => self.cmd_submit(),
                         KeyCode::Char('e') => self.cmd_edit(),
+                        KeyCode::Char('c') => { self.input_mode = InputMode::Config }
                         KeyCode::Char('h') => self.cmd_help(),
                         KeyCode::Char('d') => { self.input_mode = InputMode::Directory; },
                         _ => {}
@@ -129,10 +124,13 @@ impl Helper {
                         self.input_mode = InputMode::Normal;
                     }
                 }
+                InputMode::Config => {
+                    // there will be things for config later
+                }
             };
         } else if let Event::Mouse(mouse) = event {
             self.tc_list.handle_mouse(&mouse);
         }
-        Ok(false)
+        None
     }
 }

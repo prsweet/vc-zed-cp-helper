@@ -11,7 +11,7 @@ pub fn block(title: Option<&str>) -> Block<'static> {
         .title(if_title.to_string())
         .borders(Borders::ALL)
         .bold()
-        .title_style(Color::White)
+        .title_style(Color::Reset)
         .border_type(BorderType::Rounded)
         .padding(Padding::symmetric(1, 0))
 }
