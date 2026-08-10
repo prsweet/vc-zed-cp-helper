@@ -25,20 +25,17 @@ pub struct ActiveProblem {
     pub test_cases: Vec<ReceivingTestCase>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Clone, Copy, Deserialize)]
 pub enum Language {
     Cpp,
     Python,
     Java,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserConfig {
-    root_dir: PathBuf,
-    language: Language,
-    // flags,
-    // version,
-    // language_code,
+    pub language: Language,
+    pub fallback_flags: Option<String>
 }
 
 pub struct SubmitConfig {

@@ -1,12 +1,16 @@
 use std::{env, io::stdout, sync::mpsc::channel, time::Duration};
 use ratatui::{DefaultTerminal, crossterm::{event::{self, DisableMouseCapture, EnableMouseCapture}, execute}};
-use crate::{core::{HelperCommand, PassingCommand::{self, ToHelper}, SubmitterCommand, receiver, runner::spawn_runner}, helper::Helper};
+use crate::{core::{HelperCommand, PassingCommand::{self, ToHelper}, SubmitterCommand, fs_ops::{PathManager}, receiver, runner::spawn_runner}, helper::Helper};
 mod helper;
 mod components;
 mod core;
 
 fn main() -> color_eyre::Result<()>
 {
+    if !PathManager::new().1 {
+        println!("Welcome! Created Config Directory For You");
+    }
+    
     let initial_dir = env::current_dir().unwrap_or_default();
 
     let mut terminal = ratatui::init();
@@ -48,7 +52,6 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
                         HelperCommand::NewProblem(problem) => {
                             helper.wire_received_tc(problem);
                         },
-                        HelperCommand::Quit => return Ok(()),
                         _ => {}
                     }
                 }
@@ -59,6 +62,7 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
             while event::poll(Duration::from_millis(0))? {
                 let event = event::read()?;
                 if let Some(passing_command) = helper.handle_event(event) {
+                    if matches!(passing_command, ToHelper(HelperCommand::Quit)) { return Ok(()) }
                     let _ = main_tx.send(passing_command);
                 }
             }

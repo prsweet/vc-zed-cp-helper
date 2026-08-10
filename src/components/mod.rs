@@ -4,6 +4,7 @@ pub mod dir_terminal;
 mod splash;
 pub mod testcase;
 pub mod tc_list;
+pub mod config;
 
 pub fn block(title: Option<&str>) -> Block<'static> {
     let if_title = title.unwrap_or("");
