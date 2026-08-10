@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 color-eyre = "0.6.5"
+dirs = "6.0.0"
 ratatui = "0.30.0"
 ratatui-textarea = { version = "0.9.2", features = ["crossterm"]}
 serde = { version = "1.0.229", features = ["derive"] }
