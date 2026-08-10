@@ -16,7 +16,7 @@ impl PathManager {
         let root_dir = home.join(".zed-cp-helper");
         if !root_dir.exists() { 
             exists = false; 
-            fs::create_dir_all(root_dir.clone());
+            let _ = fs::create_dir_all(root_dir.clone());
         };
         
         (Self {
@@ -83,8 +83,9 @@ pub fn find_source_code(problen_name: &str) -> Option<PathBuf> {
 }
 
 pub fn load_config() -> (UserConfig, bool) {
+    let paths = PathManager::new().0;
     let mut exists = true;
-    let file_path = PathBuf::from("~/.zed-cp-helper/config.json");
+    let file_path = paths.root_dir.join("config.json");
     if !file_path.exists() { exists = false; };
     
     if let Ok(file) = fs::read_to_string(file_path) {
