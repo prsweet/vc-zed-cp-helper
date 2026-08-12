@@ -3,7 +3,7 @@ use std::path::Path;
 use ratatui::{Frame, crossterm::{cursor, event::{Event, KeyCode}}, layout::{Constraint::{Length, Percentage, Ratio}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, List, ListItem, ListState, Paragraph}};
 use ratatui_textarea::TextArea;
 
-use crate::{components::block, core::{Language::{self, Cpp, Java, Python}, UserConfig, fs_ops::{load_config}}, main};
+use crate::{components::block, core::{Language::{self, Cpp, Java, Python}, UserConfig, fs_ops::{load_config, save_config}}, main};
 
 pub struct ConfigMenu {
     pub language_area: Language,
@@ -53,7 +53,7 @@ impl ConfigMenu {
         frame.render_widget(&self.fallback_flags_area, divisions[1]);
     }
 
-    pub fn handle_key(&mut self, event: Event) {
+    pub fn handle_key(&mut self, event: Event) -> bool {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Tab => {
@@ -67,13 +67,21 @@ impl ConfigMenu {
                         Java => Cpp
                     };
                 },
+                KeyCode::Esc => {
+                    let flags = self.fallback_flags_area.lines().join("");
+                    self.user_config.language = self.language_area;
+                    self.user_config.fallback_flags = if flags.trim().is_empty() { None } else { Some(flags.trim().to_string()) };
+                    save_config(&self.user_config);
+                    return true;
+                },
                 _ => {
                     match self.active_field {
                         1 => { self.fallback_flags_area.input(key); },
                         _ => {}
                     };
-                }
+                },
             }
         }
+        false
     }
 }

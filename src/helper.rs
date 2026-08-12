@@ -145,13 +145,8 @@ impl Helper {
                     }
                 }
                 InputMode::Config => {
-                    if let KeyCode::Esc = key.code {
-                        self.input_mode = InputMode::Normal;
-                        save_config(&self.config_menu.user_config);
-                        return None;
-                    }
-                    self.config_menu.handle_key(event);
-                    // there will be things for config later
+                    let saved = self.config_menu.handle_key(event);
+                    if saved { self.input_mode = InputMode::Normal; }
                 }
             };
         } else if let Event::Mouse(mouse) = event {
