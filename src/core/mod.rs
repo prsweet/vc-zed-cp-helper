@@ -6,7 +6,6 @@ pub mod receiver;
 pub mod runner;
 pub mod submitter;
 pub mod fs_ops;
-pub mod editor;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReceivingTestCase {

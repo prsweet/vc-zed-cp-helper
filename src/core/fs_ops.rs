@@ -16,7 +16,7 @@ impl PathManager {
         let root_dir = home.join(".zed-cp-helper");
         if !root_dir.exists() { 
             exists = false; 
-            let _ = fs::create_dir_all(root_dir.clone());
+            let _ = fs::create_dir_all(&root_dir);
         };
         
         (Self {
@@ -30,7 +30,7 @@ impl PathManager {
 
 pub fn write_tc_file(problem: &ActiveProblem) {
     let paths = PathManager::new().0;
-    let tc_dir = paths.root_dir.join(".testcase");
+    let tc_dir = paths.root_dir.join(".testcases");
     let _ = fs::create_dir(&tc_dir);
     if let Ok(content) = serde_json::to_string_pretty(problem) {
         let file_path = tc_dir.join(format!("{}.json", problem.name));

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ratatui::{Frame, crossterm::{cursor, event::{Event, KeyCode}}, layout::{Constraint::{Length, Percentage}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, List, ListItem, ListState, Paragraph}};
+use ratatui::{Frame, crossterm::{cursor, event::{Event, KeyCode}}, layout::{Constraint::{Length, Percentage, Ratio}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, List, ListItem, ListState, Paragraph}};
 use ratatui_textarea::TextArea;
 
 use crate::{components::block, core::{Language::{self, Cpp, Java, Python}, UserConfig, fs_ops::{load_config}}, main};
@@ -30,8 +30,8 @@ impl ConfigMenu {
     }
 
     pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
-        let popup_area = area.centered(Percentage(50), Percentage(50));
-        let popup_block = block(Some(" Configuration ")).border_style(Color::LightRed).title_alignment(Center);
+        let popup_area = area.centered(Percentage(50), Length(8));
+        let popup_block = block(None).border_style(Color::LightRed).title_alignment(Center);
         let popup_inner = popup_block.inner(popup_area);
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup_block, popup_area);
@@ -60,7 +60,7 @@ impl ConfigMenu {
                     self.active_field += 1;
                     self.active_field %= 2;
                 },
-                KeyCode::Right | KeyCode::Left if self.active_field == 1 => {
+                KeyCode::Right | KeyCode::Left if self.active_field == 0 => {
                     self.language_area = match self.language_area {
                         Cpp => Python,
                         Python => Java,
