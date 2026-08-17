@@ -12,12 +12,12 @@ pub struct PathManager {
 impl PathManager {
     pub fn new() -> (Self, bool) {
         let home = dirs::home_dir().expect("Could not find home directory");
-        let mut exists = true;
         let root_dir = home.join(".zed-cp-helper");
-        if !root_dir.exists() { 
-            exists = false; 
-            let _ = fs::create_dir_all(&root_dir);
-        };
+        let exists = root_dir.exists();
+        
+        let _ = fs::create_dir_all(&root_dir);
+        let _ = fs::create_dir_all(&root_dir.join(".binaries"));
+        let _ = fs::create_dir(&root_dir.join(".testcases"));
         
         (Self {
             home_dir: home,
@@ -28,38 +28,34 @@ impl PathManager {
     }
 }
 
-pub fn write_tc_file(problem: &ActiveProblem) {
+pub fn write_tc_file(problem: &ActiveProblem) -> bool {
     let paths = PathManager::new().0;
     let tc_dir = paths.root_dir.join(".testcases");
     let _ = fs::create_dir(&tc_dir);
     if let Ok(content) = serde_json::to_string_pretty(problem) {
         let file_path = tc_dir.join(format!("{}.json", problem.name));
-        let _ = fs::write(file_path, content);
+        if !file_path.exists() {
+            let _ = fs::write(file_path, content);
+            return true;
+        }
     }
+    false
 }
 
-pub fn write_code_file(problem: &ActiveProblem) {
+pub fn write_code_file(problem: &ActiveProblem, code_path: &PathBuf) -> PathBuf {
     let (config, _) = load_config();
     let (ext, template) = match &config.language {
         Language::Cpp => (
             "cpp",
             "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    // your code goes here\n    return 0;\n}\n"
-        ),
-        Language::Python => (
-            "py",
-            "def solve():\n    pass\n\nif __name__ == '__main__':\n    solve()\n"
-        ),
-        Language::Java => (
-            "java",
-            "import java.util.*;\n\npublic class Main {\n    public static void main(String[]args) {\n    }\n}\n"
-        ),
+        )
     };
 
-    let paths = PathManager::new().0;
-    let file_path = paths.root_dir.join(format!("{}.{}", problem.name, ext));
+    let file_path = code_path.join(format!("{}.{}", problem.name, ext));
     if !file_path.exists() {
-        let _ = fs::write(file_path, template);
+        let _ = fs::write(&file_path, template);
     }
+    file_path
 }
 
 pub fn read_tc_file(file_path: &Path) -> Option<ActiveProblem> {
@@ -96,7 +92,7 @@ pub fn load_config() -> (UserConfig, bool) {
 
     (UserConfig {
         language: Language::Cpp,
-        fallback_flags: Some("-std=c++23".to_string())
+        fallback_flags: vec!["-std=c++23".to_string()]
     }, false)
 }
 

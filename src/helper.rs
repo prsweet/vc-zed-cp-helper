@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf};
+use derive_name::{Named, VariantName};
 use ratatui::{Frame, crossterm::event::{Event, KeyCode}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, BorderType, Borders, Padding}};
 
-use crate::{components::{block, config::ConfigMenu, dir_terminal::DirTerminal, tc_list::TestCaseList, testcase::TestCase}, core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, ReceivingTestCase, RunnerCommand, UserConfig, fs_ops::{find_source_code, load_config, save_config, write_code_file, write_tc_file}}};
+use crate::{components::{block, config::ConfigMenu, dir_terminal::DirTerminal, tc_list::TestCaseList, testcase::{Accepted::{self, Other}, TestCase}}, core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, ReceivingTestCase, RunnerCommand, UserConfig, Verdict, fs_ops::{find_source_code, load_config, save_config, write_code_file, write_tc_file}}};
 
 pub enum InputMode {
     Normal,
@@ -48,12 +49,7 @@ impl Helper {
 
     pub fn cmd_run(&mut self) -> Option<PassingCommand> {
         if let Some(problem) = &self.active_problem {
-            if let Some(path) = find_source_code(&problem.name) {
-                let path_str = path.to_string_lossy().to_string();
-                return Some(ToRunner(RunnerCommand::RunCode(path_str)));
-            } else {
-                self.dir_terminal.output = Some("Error: Source file not found".to_string());
-            }
+            return Some(ToRunner(RunnerCommand::RunCode(problem.clone())));
         } else {
             self.dir_terminal.output = Some("Error: no active problem".to_string());
         }
@@ -65,10 +61,8 @@ impl Helper {
         self.tc_list.add_tc();
     }
 
-    pub fn update_tc(&self) {
-        if let Some(problem) = &self.active_problem {
-            let mut updated_problem = problem.clone();
-            
+    pub fn update_tc(&mut self) {
+        if let Some(problem) = &mut self.active_problem {
             let mut updated_test = Vec::new();
             for tc in &self.tc_list.testcases {
                 updated_test.push(ReceivingTestCase {
@@ -77,8 +71,7 @@ impl Helper {
                 });
             }
             
-            updated_problem.test_cases = updated_test;
-            write_tc_file(&updated_problem);
+            write_tc_file(&problem);
         }
     }
 
@@ -100,16 +93,46 @@ impl Helper {
 
     pub fn wire_received_tc(&mut self, mut problem: ActiveProblem) {
         problem.name = problem.name.replace(".", "").replace(" ", "_");
-        self.active_problem = Some(problem.clone());
         self.tc_list.clear();
+        let created = write_tc_file(&problem);
+        if created {
+            
+        }
 
         for tc in problem.test_cases.iter() {
             self.tc_list.testcases.push(TestCase::new(&tc.input, &tc.expected_output));
         }
 
         self.input_mode = InputMode::Normal;
-        write_tc_file(&problem);
-        write_code_file(&problem);
+        let code_path = write_code_file(&problem, &self.dir_terminal.cur_dir);
+        problem.code_file = code_path;
+        self.active_problem = Some(problem.clone());
+    }
+
+    pub fn show_results(&mut self, results: Vec<Verdict>) {
+        for (i, result) in results.into_iter().enumerate() {
+            if let Some(tc) = self.tc_list.testcases.get_mut(i) {
+                match result {
+                    Verdict::Success { output, time } => {
+                        let got_content = String::from_utf8_lossy(&output.stdout).to_string();
+                        let exp_content = tc.exp_content.lines().join("\n");
+                        tc.second_title = Some(format!(" {}ms",time));
+                        tc.ac = if got_content == exp_content { Accepted::AC } else { Accepted::Other };
+                        tc.got_content = Some(got_content);
+                    },
+                    a => {
+                        tc.second_title = Some(format!(" {}", a.variant_name()));
+                        tc.ac = Accepted::Other;
+                    }
+                }
+                tc.collapsed = matches!(tc.ac, Accepted::AC);
+            }
+        }
+        /*
+         * all the things will be collapsed and showed on block title
+         * except for success and WA along with title it will show in got content
+         * and sucees will be shrinked by default
+         */
     }
 
     pub fn handle_event(&mut self, event: Event) -> Option<PassingCommand> {
@@ -120,7 +143,6 @@ impl Helper {
                         self.update_tc();
                         self.input_mode = InputMode::Normal;
                         return None;
-                        // return Some(ToHelper(HelperCommand::EditTestCase));
                         // here i guess we have to use fs_ops.rs, will see for it
                     }
                     self.tc_list.handle_key(event);
@@ -128,21 +150,18 @@ impl Helper {
                 InputMode::Normal => {
                     match key.code {
                         KeyCode::Char('q') => return Some(ToHelper(HelperCommand::Quit)),
-                        KeyCode::Char('r') => return self.cmd_run(),
-                        KeyCode::Char('a') => self.cmd_add(),
-                        KeyCode::Char('s') => self.cmd_submit(),
-                        KeyCode::Char('e') => self.cmd_edit(),
-                        KeyCode::Char('c') => { self.input_mode = InputMode::Config }
+                        KeyCode::Char('a') => return Some(ToHelper(HelperCommand::Add)),
+                        KeyCode::Char('r') => return Some(ToHelper(HelperCommand::Run)),
+                        KeyCode::Char('e') => return Some(ToHelper(HelperCommand::Edit)),
                         KeyCode::Char('h') => self.cmd_help(),
+                        KeyCode::Char('c') => { self.input_mode = InputMode::Config }
                         KeyCode::Char('d') => { self.input_mode = InputMode::Directory; },
                         _ => {}
                     }
                 },
                 InputMode::Directory => {
                     let change_mode = self.dir_terminal.handle_event(key);
-                    if change_mode {
-                        self.input_mode = InputMode::Normal;
-                    }
+                    if change_mode { self.input_mode = InputMode::Normal; }
                 }
                 InputMode::Config => {
                     let saved = self.config_menu.handle_key(event);

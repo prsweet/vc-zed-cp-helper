@@ -1,7 +1,7 @@
-use ratatui::{Frame, crossterm::event::{MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{BorderType, Borders, Padding, Paragraph}};
+use ratatui::{Frame, crossterm::event::{MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{BorderType, Borders, Padding, Paragraph}};
 use ratatui_textarea::{TextArea};
 
-use crate::components::block;
+use crate::{components::block, core::Verdict};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ActiveBox {
@@ -28,6 +28,12 @@ impl VisualState {
     }
 }
 
+pub enum Accepted {
+    AC,
+    None,
+    Other
+}
+
 pub struct TestCase {
     pub inp_content: TextArea<'static>,
     pub exp_content: TextArea<'static>,
@@ -35,6 +41,9 @@ pub struct TestCase {
     pub input_box: VisualState,
     pub expected_box: VisualState,
     pub got_box: VisualState,
+    pub second_title: Option<String>,
+    pub ac: Accepted,
+    pub collapsed: bool
 }
 
 impl TestCase {
@@ -51,35 +60,49 @@ impl TestCase {
             got_content: None,
             got_box: VisualState::new(),
             expected_box: VisualState::new(),
-            input_box: VisualState::new()
+            input_box: VisualState::new(),
+            second_title: None,
+            ac: Accepted::None,
+            collapsed: false
         }
     }
 
     pub fn draw_tc(&mut self, frame: &mut Frame, area: Rect, title: &str, active_box: ActiveBox, is_editing: bool) {
-        let tc_block = block(Some(title)).borders(Borders::TOP).padding(Padding::ZERO).border_type(BorderType::LightDoubleDashed);
-        let tc_inner = tc_block.inner(area);
+        let mut tc_block = block(Some(title)).borders(Borders::TOP).padding(Padding::ZERO).border_type(BorderType::LightDoubleDashed);
+        if let Some(second_title) = &self.second_title {
+           tc_block = tc_block.title(Line::from(second_title.as_str()).alignment(Right));
+        };
+
+        if !self.collapsed {
+            if matches!(self.ac, Accepted::Other) { tc_block = tc_block.border_style(Color::Red); }
+            let tc_inner = tc_block.inner(area);
+            let v = Layout::vertical([Percentage(50), Percentage(50)]).split(tc_inner);
+            let h = Layout::horizontal([Percentage(50), Percentage(50)]).split(v[1]);
+    
+            self.input_box.rect = v[0];
+            self.expected_box.rect = h[0];
+            self.got_box.rect = h[1];
+    
+            Self::render_pane(frame, &mut self.inp_content, &self.input_box, " Input ", matches!(active_box, ActiveBox::Input) && is_editing, is_editing, &self.ac);
+            Self::render_pane(frame, &mut self.exp_content, &self.expected_box, " Expected ", matches!(active_box, ActiveBox::Expected) && is_editing, is_editing, &self.ac);
+    
+            let got_text = self.got_content.clone().unwrap_or(format!("run the test to get the results"));
+            let got_panel = Paragraph::new(got_text)
+                .block(block(Some(" Got ")).border_style(Color::Blue).title_alignment(Right))
+                .scroll(self.got_box.scroll);
+            frame.render_widget(got_panel, self.got_box.rect);
+        } else {
+            if matches!(self.ac, Accepted::AC) { tc_block = tc_block.border_style(Color::Green); }
+        }
+        
         frame.render_widget(tc_block, area);
-
-        let v = Layout::vertical([Percentage(50), Percentage(50)]).split(tc_inner);
-        let h = Layout::horizontal([Percentage(50), Percentage(50)]).split(v[1]);
-
-        self.input_box.rect = v[0];
-        self.expected_box.rect = h[0];
-        self.got_box.rect = h[1];
-
-        Self::render_pane(frame, &mut self.inp_content, &self.input_box, " Input ", matches!(active_box, ActiveBox::Input) && is_editing, is_editing);
-        Self::render_pane(frame, &mut self.exp_content, &self.expected_box, " Expected ", matches!(active_box, ActiveBox::Expected) && is_editing, is_editing);
-
-        let got_text = self.got_content.clone().unwrap_or(format!("run the test to get the results"));
-        let got_panel = Paragraph::new(got_text)
-            .block(block(Some(" Got ")).border_style(Color::Blue).title_alignment(Right))
-            .scroll(self.got_box.scroll);
-        frame.render_widget(got_panel, self.got_box.rect);
     }
 
-    pub fn render_pane(frame: &mut Frame, textarea: &mut TextArea<'static>, state: &VisualState, title: &str, is_active: bool, is_editing: bool) {
+    pub fn render_pane(frame: &mut Frame, textarea: &mut TextArea<'static>, state: &VisualState, title: &str, is_active: bool, is_editing: bool, ac: &Accepted) {
         let (border_color, cursor_style) = if is_active && is_editing {
             (Color::LightGreen, Style::default().add_modifier(Modifier::REVERSED))
+        } else if matches!(ac, Accepted::AC)  {
+            (Color::Green, Style::default())
         } else {
             (Color::Blue, Style::default())
         };

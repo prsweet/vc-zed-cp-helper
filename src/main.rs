@@ -49,8 +49,14 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
                 },
                 PassingCommand::ToHelper(msg) => {
                     match msg {
-                        HelperCommand::NewProblem(problem) => {
-                            helper.wire_received_tc(problem);
+                        HelperCommand::New(problem) => { helper.wire_received_tc(problem); },
+                        HelperCommand::Add => { helper.cmd_add(); },
+                        HelperCommand::Edit => { helper.cmd_edit(); }
+                        HelperCommand::ShowResult(results) => { helper.show_results(results); }
+                        HelperCommand::Run => {
+                            if let Some(cmd) = helper.cmd_run() {
+                                let _ = main_tx.send(cmd);
+                            }
                         },
                         _ => {}
                     }

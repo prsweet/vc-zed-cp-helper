@@ -2,7 +2,7 @@ use std::{sync::mpsc::Sender, thread};
 
 use tiny_http::{Response, Server};
 
-use crate::core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, RunnerCommand};
+use crate::core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper}, RunnerCommand};
 
 pub fn spawn_server(tx:Sender<PassingCommand>)
 {
@@ -17,15 +17,15 @@ pub fn spawn_server(tx:Sender<PassingCommand>)
             if request.as_reader().read_to_string(&mut content).is_ok() {
                 match path.as_str() {
                     "/cmd/r" => {
-                        let _ = tx.send(ToRunner(RunnerCommand::RunCode(content)));
+                        let _ = tx.send(ToHelper(HelperCommand::Run));
                     },
                     "/cmd/e" => {
-                        let _ = tx.send(ToHelper(HelperCommand::EditTestCase));
+                        let _ = tx.send(ToHelper(HelperCommand::Edit));
                     },
                     _ => {
                         let problem = serde_json::from_str::<ActiveProblem>(&content);
                         match problem {
-                            Ok(problem) => { let _ = tx.send(ToHelper(HelperCommand::NewProblem(problem))); },
+                            Ok(problem) => { let _ = tx.send(ToHelper(HelperCommand::New(problem))); },
                             Err(e) => { eprintln!("Failed to parse JSON!, {}", e); }
                         }
                     }

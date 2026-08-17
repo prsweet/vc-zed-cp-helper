@@ -1,9 +1,7 @@
-use std::path::Path;
-
-use ratatui::{Frame, crossterm::{cursor, event::{Event, KeyCode}}, layout::{Constraint::{Length, Percentage, Ratio}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, List, ListItem, ListState, Paragraph}};
+use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{Length, Percentage}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, Paragraph}};
 use ratatui_textarea::TextArea;
 
-use crate::{components::block, core::{Language::{self, Cpp, Java, Python}, UserConfig, fs_ops::{load_config, save_config}}, main};
+use crate::{components::block, core::{Language::{self, Cpp}, UserConfig, fs_ops::{load_config, save_config}}};
 
 pub struct ConfigMenu {
     pub language_area: Language,
@@ -17,9 +15,7 @@ impl ConfigMenu {
         let (config, _) = load_config();
 
         let mut fallback_flags = TextArea::default();
-        if let Some(flag) = &config.fallback_flags {
-            fallback_flags.insert_str(flag);
-        }
+        fallback_flags.insert_str(if config.fallback_flags.len() > 0 { config.fallback_flags.join(" ") } else { "".to_string() });
 
         Self {
             language_area: config.language,
@@ -60,17 +56,22 @@ impl ConfigMenu {
                     self.active_field += 1;
                     self.active_field %= 2;
                 },
-                KeyCode::Right | KeyCode::Left if self.active_field == 0 => {
-                    self.language_area = match self.language_area {
-                        Cpp => Python,
-                        Python => Java,
-                        Java => Cpp
-                    };
-                },
+                // KeyCode::Right | KeyCode::Left if self.active_field == 0 => {
+                //     self.language_area = match self.language_area {
+                //         Cpp => Python,
+                //         Python => Java,
+                //         Java => Cpp
+                //     };
+                // },
                 KeyCode::Esc => {
-                    let flags = self.fallback_flags_area.lines().join("");
+                    let flags_str = self.fallback_flags_area.lines().join("");
+                    let flags = flags_str
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
+                    
+                    self.user_config.fallback_flags = flags;
                     self.user_config.language = self.language_area;
-                    self.user_config.fallback_flags = if flags.trim().is_empty() { None } else { Some(flags.trim().to_string()) };
                     save_config(&self.user_config);
                     return true;
                 },

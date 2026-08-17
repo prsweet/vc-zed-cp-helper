@@ -1,5 +1,6 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Output};
 
+use derive_name::VariantName;
 use serde::{Deserialize, Serialize};
 
 pub mod receiver;
@@ -19,22 +20,22 @@ pub struct ActiveProblem {
     pub name: String,
     pub url: String,
     #[serde(rename = "timeLimit")]
-    pub time_limit: u32,
+    pub time_limit: u64,
     #[serde(rename = "tests")]
-    pub test_cases: Vec<ReceivingTestCase>
+    pub test_cases: Vec<ReceivingTestCase>,
+    #[serde(default)]
+    pub code_file: PathBuf
 }
 
 #[derive(Debug, Serialize, Clone, Copy, Deserialize)]
 pub enum Language {
     Cpp,
-    Python,
-    Java,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserConfig {
     pub language: Language,
-    pub fallback_flags: Option<String>
+    pub fallback_flags: Vec<String>
 }
 
 pub struct SubmitConfig {
@@ -45,22 +46,32 @@ pub struct SubmitConfig {
 }
 
 pub enum RunnerCommand {
-    RunCode(String), // file_path we will get through $(ZED_FILE)
+    RunCode(ActiveProblem), // file_path we will get through $(ZED_FILE)
+}
+
+#[derive(Debug, VariantName)]
+pub enum Verdict {
+    Success {
+        output: Output,
+        time: u128
+    },
+    TimeLimitExceeded,
+    CompilationError,
+    RuntimeError,
 }
 
 pub enum HelperCommand {
-    NewProblem(ActiveProblem),
-    RunResult(Vec<String>), // from runner to helper
-    EditTestCase, // from 
-    AddTestCase,
-    ChangeDirectory,
+    New(ActiveProblem),
+    Run,
+    Edit,
+    ShowResult(Vec<Verdict>),
+    Add,
     Error(String),
-    UpdateConfig(UserConfig),
     Quit,
 }
 
 pub enum SubmitterCommand {
-    SubmitCode(SubmitConfig) // its (url, file_path)
+    SubmitCode(SubmitConfig)
 }
 
 pub enum PassingCommand {
