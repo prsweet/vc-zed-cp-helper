@@ -1,8 +1,8 @@
-use std::{ops::Deref, path::PathBuf};
-use derive_name::{Named, VariantName};
-use ratatui::{Frame, crossterm::event::{Event, KeyCode}, style::{Color, Modifier, Style, Stylize}, widgets::{Block, BorderType, Borders, Padding}};
+use std::path::PathBuf;
+use derive_name::VariantName;
+use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::Constraint::Percentage, style::{Color, Modifier, Style}, widgets::Block};
 
-use crate::{components::{block, config::ConfigMenu, dir_terminal::DirTerminal, tc_list::TestCaseList, testcase::{Accepted::{self, Other}, TestCase}}, core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, ReceivingTestCase, RunnerCommand, UserConfig, Verdict, fs_ops::{find_source_code, load_config, save_config, write_code_file, write_tc_file}}};
+use crate::{components::{block, config::ConfigMenu, dir_terminal::DirTerminal, splash::render, tc_list::TestCaseList, testcase::{Accepted, TestCase}}, core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper, ToRunner}, ReceivingTestCase, RunnerCommand, Verdict, fs_ops::FsOps}};
 
 pub enum InputMode {
     Normal,
@@ -16,17 +16,19 @@ pub struct Helper {
     pub active_problem: Option<ActiveProblem>,
     pub input_mode: InputMode,
     pub tc_list: TestCaseList,
-    pub config_menu: ConfigMenu
+    pub config_menu: ConfigMenu,
+    pub fs_ops: FsOps
 }
 
 impl Helper {
-    pub fn new(intitial_dir: PathBuf) -> Self {
+    pub fn new(intitial_dir: PathBuf, fs_ops: &FsOps) -> Self {
         Self {
             dir_terminal: DirTerminal::new(intitial_dir),
             active_problem: None,
             input_mode: InputMode::Normal,
             tc_list: TestCaseList::new(),
-            config_menu: ConfigMenu::new()
+            config_menu: ConfigMenu::new(fs_ops.load_config().0),
+            fs_ops: fs_ops.clone()
         }
     }
 
@@ -38,7 +40,13 @@ impl Helper {
         frame.render_widget(master_border, area);
 
         let tc_list_area = self.dir_terminal.draw(frame, main_area, matches!(self.input_mode, InputMode::Directory));
-        self.tc_list.draw(frame, tc_list_area, matches!(self.input_mode, InputMode::Editing));
+        
+        if self.tc_list.testcases.len() > 0 {
+            self.tc_list.draw(frame, tc_list_area, matches!(self.input_mode, InputMode::Editing));
+        } else {
+            render(frame, tc_list_area.centered(Percentage(100), Percentage(50)));
+        }
+
 
         if matches!(self.input_mode, InputMode::Config) {
             let dim_bg = Block::default().style(Style::default().add_modifier(Modifier::DIM));
@@ -70,8 +78,8 @@ impl Helper {
                     expected_output: tc.exp_content.lines().join("\n")
                 });
             }
-            
-            write_tc_file(&problem);
+            problem.test_cases = updated_test;
+            self.fs_ops.write_tc_file(&problem);
         }
     }
 
@@ -94,7 +102,7 @@ impl Helper {
     pub fn wire_received_tc(&mut self, mut problem: ActiveProblem) {
         problem.name = problem.name.replace(".", "").replace(" ", "_");
         self.tc_list.clear();
-        let created = write_tc_file(&problem);
+        let created = self.fs_ops.write_tc_file(&problem);
         if created {
             
         }
@@ -104,7 +112,7 @@ impl Helper {
         }
 
         self.input_mode = InputMode::Normal;
-        let code_path = write_code_file(&problem, &self.dir_terminal.cur_dir);
+        let code_path = self.fs_ops.write_code_file(&problem, &self.dir_terminal.cur_dir);
         problem.code_file = code_path;
         self.active_problem = Some(problem.clone());
     }
@@ -114,13 +122,18 @@ impl Helper {
             if let Some(tc) = self.tc_list.testcases.get_mut(i) {
                 match result {
                     Verdict::Success { output, time } => {
-                        let got_content = String::from_utf8_lossy(&output.stdout).to_string();
+                        let got_content = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
                         let exp_content = tc.exp_content.lines().join("\n");
                         tc.second_title = Some(format!(" {}ms",time));
                         tc.ac = if got_content == exp_content { Accepted::AC } else { Accepted::Other };
                         tc.got_content = Some(got_content);
                     },
                     a => {
+                        match &a {
+                            Verdict::CompilationError { error } => tc.got_content = Some(error.clone()),
+                            Verdict::RuntimeError { error } => tc.got_content = Some(error.clone()),
+                            _ => {}
+                        };
                         tc.second_title = Some(format!(" {}", a.variant_name()));
                         tc.ac = Accepted::Other;
                     }
@@ -152,7 +165,7 @@ impl Helper {
                         KeyCode::Char('q') => return Some(ToHelper(HelperCommand::Quit)),
                         KeyCode::Char('a') => return Some(ToHelper(HelperCommand::Add)),
                         KeyCode::Char('r') => return Some(ToHelper(HelperCommand::Run)),
-                        KeyCode::Char('e') => return Some(ToHelper(HelperCommand::Edit)),
+                        KeyCode::Char('e') => { if self.active_problem.is_some() { return Some(ToHelper(HelperCommand::Edit)) } }
                         KeyCode::Char('h') => self.cmd_help(),
                         KeyCode::Char('c') => { self.input_mode = InputMode::Config }
                         KeyCode::Char('d') => { self.input_mode = InputMode::Directory; },
@@ -165,7 +178,10 @@ impl Helper {
                 }
                 InputMode::Config => {
                     let saved = self.config_menu.handle_key(event);
-                    if saved { self.input_mode = InputMode::Normal; }
+                    if saved { 
+                        self.fs_ops.save_config(&self.config_menu.user_config);
+                        self.input_mode = InputMode::Normal; 
+                    }
                 }
             };
         } else if let Event::Mouse(mouse) = event {

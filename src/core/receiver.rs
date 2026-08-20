@@ -2,7 +2,7 @@ use std::{sync::mpsc::Sender, thread};
 
 use tiny_http::{Response, Server};
 
-use crate::core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper}, RunnerCommand};
+use crate::core::{ActiveProblem, HelperCommand, PassingCommand::{self, ToHelper}};
 
 pub fn spawn_server(tx:Sender<PassingCommand>)
 {

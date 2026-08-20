@@ -1,25 +1,23 @@
 use std::{env, io::stdout, sync::mpsc::channel, time::Duration};
 use ratatui::{DefaultTerminal, crossterm::{event::{self, DisableMouseCapture, EnableMouseCapture}, execute}};
-use crate::{core::{HelperCommand, PassingCommand::{self, ToHelper}, SubmitterCommand, fs_ops::{PathManager}, receiver, runner::spawn_runner}, helper::Helper};
+use crate::{core::{HelperCommand, PassingCommand::{self, ToHelper}, SubmitterCommand, fs_ops::FsOps, receiver::spawn_server, runner::spawn_runner}, helper::Helper};
 mod helper;
 mod components;
 mod core;
+mod error;
 
 fn main() -> color_eyre::Result<()>
 {
-    if !PathManager::new().1 {
-        println!("Welcome! Created Config Directory For You");
-    }
-    
+    let fs_ops = FsOps::new();
     let initial_dir = env::current_dir().unwrap_or_default();
 
     let mut terminal = ratatui::init();
+    let mut helper = Helper::new(initial_dir, &fs_ops);
+
     let _ = execute!(stdout(), EnableMouseCapture);
-
-    let mut helper = Helper::new(initial_dir);
     let result = run_app(&mut terminal, &mut helper);
-
     let _ = execute!(stdout(), DisableMouseCapture);
+
     ratatui::restore();
     result
 }
@@ -27,8 +25,8 @@ fn main() -> color_eyre::Result<()>
 fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::Result<()>
 {
     let (main_tx, main_rx) = channel::<PassingCommand>();
-    let runner_tx = spawn_runner(main_tx.clone());
-    receiver::spawn_server(main_tx.clone());
+    let runner_tx = spawn_runner(main_tx.clone(), helper.fs_ops.clone());
+    spawn_server(main_tx.clone());
     
     loop {
         terminal.draw(|frame| {
@@ -37,9 +35,7 @@ fn run_app(terminal: &mut DefaultTerminal, helper: &mut Helper) -> color_eyre::R
         
         if let Ok(send_to) = main_rx.try_recv() {
             match send_to {
-                PassingCommand::ToRunner(msg) => {
-                    let _ = runner_tx.send(msg);
-                },
+                PassingCommand::ToRunner(msg) => { let _ = runner_tx.send(msg); },
                 PassingCommand::ToSubmitter(msg) => {
                     match msg {
                         SubmitterCommand::SubmitCode(config) => {

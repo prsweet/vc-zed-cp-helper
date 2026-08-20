@@ -1,7 +1,7 @@
 use ratatui::{Frame, crossterm::event::{Event, KeyCode}, layout::{Constraint::{Length, Percentage}, HorizontalAlignment::{Center, Right}, Layout, Rect}, style::{Color, Modifier, Style}, widgets::{Clear, Paragraph}};
 use ratatui_textarea::TextArea;
 
-use crate::{components::block, core::{Language::{self, Cpp}, UserConfig, fs_ops::{load_config, save_config}}};
+use crate::{components::block, core::{Language::{self, Cpp}, UserConfig}};
 
 pub struct ConfigMenu {
     pub language_area: Language,
@@ -11,9 +11,7 @@ pub struct ConfigMenu {
 }
 
 impl ConfigMenu {
-    pub fn new() -> Self {
-        let (config, _) = load_config();
-
+    pub fn new(config: UserConfig) -> Self {
         let mut fallback_flags = TextArea::default();
         fallback_flags.insert_str(if config.fallback_flags.len() > 0 { config.fallback_flags.join(" ") } else { "".to_string() });
 
@@ -27,7 +25,7 @@ impl ConfigMenu {
 
     pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
         let popup_area = area.centered(Percentage(50), Length(8));
-        let popup_block = block(None).border_style(Color::LightRed).title_alignment(Center);
+        let popup_block = block(None).border_style(Color::Yellow).title_alignment(Center);
         let popup_inner = popup_block.inner(popup_area);
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup_block, popup_area);
@@ -72,7 +70,6 @@ impl ConfigMenu {
                     
                     self.user_config.fallback_flags = flags;
                     self.user_config.language = self.language_area;
-                    save_config(&self.user_config);
                     return true;
                 },
                 _ => {

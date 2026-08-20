@@ -56,8 +56,12 @@ pub enum Verdict {
         time: u128
     },
     TimeLimitExceeded,
-    CompilationError,
-    RuntimeError,
+    CompilationError {
+        error: String
+    },
+    RuntimeError {
+        error: String
+    },
 }
 
 pub enum HelperCommand {

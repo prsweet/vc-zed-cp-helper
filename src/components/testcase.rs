@@ -1,31 +1,14 @@
-use ratatui::{Frame, crossterm::event::{MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style}, text::Line, widgets::{BorderType, Borders, Padding, Paragraph}};
+use derive_name::VariantName;
+use ratatui::{Frame, crossterm::event::{MouseButton, MouseEvent, MouseEventKind}, layout::{Constraint::Percentage, HorizontalAlignment::Right, Layout, Rect}, style::{Color, Modifier, Style, Stylize}, text::Line, widgets::{BorderType, Borders, Padding, Paragraph}};
 use ratatui_textarea::{TextArea};
 
-use crate::{components::block, core::Verdict};
+use crate::{components::{VisualState, block}, core::Verdict};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ActiveBox {
     Input,
     Expected,
     None
-}
-
-pub struct VisualState {
-    pub rect: Rect,
-    pub scroll: (u16, u16)
-}
-
-impl VisualState {
-    pub fn new() -> Self {
-        Self {
-            rect: Rect::default(),
-            scroll: (0, 0)
-        }
-    }
-
-    pub fn check_hover(&self, mouse: &MouseEvent) -> bool {
-        mouse.column >= self.rect.x && mouse.column < self.rect.x + self.rect.width && mouse.row >= self.rect.y && mouse.row < self.rect.y + self.rect.height
-    }
 }
 
 pub enum Accepted {
@@ -41,9 +24,10 @@ pub struct TestCase {
     pub input_box: VisualState,
     pub expected_box: VisualState,
     pub got_box: VisualState,
+    pub collapse_toggle_area: VisualState,
     pub second_title: Option<String>,
     pub ac: Accepted,
-    pub collapsed: bool
+    pub collapsed: bool,
 }
 
 impl TestCase {
@@ -61,20 +45,38 @@ impl TestCase {
             got_box: VisualState::new(),
             expected_box: VisualState::new(),
             input_box: VisualState::new(),
+            collapse_toggle_area: VisualState::new(),
             second_title: None,
             ac: Accepted::None,
-            collapsed: false
+            collapsed: false,
         }
     }
 
+    pub fn row_height(&self) -> usize {
+        if self.collapsed { 2 } else { 18 }
+    }
+
     pub fn draw_tc(&mut self, frame: &mut Frame, area: Rect, title: &str, active_box: ActiveBox, is_editing: bool) {
-        let mut tc_block = block(Some(title)).borders(Borders::TOP).padding(Padding::ZERO).border_type(BorderType::LightDoubleDashed);
+        self.collapse_toggle_area.rect = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 2
+        };
+        
+        let format_title = format!("{} {}", if self.collapsed { "▶" } else { "▼" }, title);
+        let mut tc_block = block(Some(&format_title)).borders(Borders::TOP).padding(Padding::ZERO).border_type(BorderType::LightDoubleDashed);
         if let Some(second_title) = &self.second_title {
-           tc_block = tc_block.title(Line::from(second_title.as_str()).alignment(Right));
+            tc_block = tc_block.title(Line::from(second_title.as_str()).alignment(Right));
         };
 
+        tc_block = match self.ac {
+            Accepted::AC => tc_block.border_style(Color::Green).title_style(Color::Green),
+            Accepted::Other => tc_block.border_style(Color::Red).title_style(Color::Red),
+            Accepted::None => tc_block.border_style(Color::Reset).title_style(Color::Reset),
+        };
+        
         if !self.collapsed {
-            if matches!(self.ac, Accepted::Other) { tc_block = tc_block.border_style(Color::Red); }
             let tc_inner = tc_block.inner(area);
             let v = Layout::vertical([Percentage(50), Percentage(50)]).split(tc_inner);
             let h = Layout::horizontal([Percentage(50), Percentage(50)]).split(v[1]);
@@ -92,7 +94,9 @@ impl TestCase {
                 .scroll(self.got_box.scroll);
             frame.render_widget(got_panel, self.got_box.rect);
         } else {
-            if matches!(self.ac, Accepted::AC) { tc_block = tc_block.border_style(Color::Green); }
+            self.input_box.rect = Rect::default();
+            self.expected_box.rect = Rect::default();
+            self.got_box.rect = Rect::default();
         }
         
         frame.render_widget(tc_block, area);
@@ -121,6 +125,13 @@ impl TestCase {
     }
 
     pub fn handle_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            if self.collapse_toggle_area.check_hover(mouse) {
+                self.collapsed = !self.collapsed;
+                return true;
+            }
+        }
+        
         let (state, v_lines, h_chars) = if self.input_box.check_hover(mouse) {
             (
                 &mut self.input_box,
@@ -150,28 +161,24 @@ impl TestCase {
             MouseEventKind::ScrollDown => {
                 if state.scroll.0 < v_lines.saturating_sub(state.rect.height.saturating_sub(2)) {
                     state.scroll.0 += 1;
-                    return true;
-                }
+                } /* else { return false; } */
             },
             MouseEventKind::ScrollUp => {
                 if state.scroll.0 > 0 {
                     state.scroll.0 -= 1;
-                    return true;
-                }
+                } /* else { return false; } */
             },
             MouseEventKind::ScrollLeft => {
                 if state.scroll.1 > 0 {
                     state.scroll.1 -= 1;
-                    return true;
                 }
             },
             MouseEventKind::ScrollRight => {
                 let mx_h = h_chars.saturating_sub(state.rect.width.saturating_sub(4));
                 if state.scroll.1 < mx_h {
                     state.scroll.1 += 1;
-                    return true;
                 }
-            }
+            },
             _ => {}
         };
         

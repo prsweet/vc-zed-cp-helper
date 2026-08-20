@@ -1,31 +1,29 @@
-use std::{fs, path::PathBuf, process::Command, sync::mpsc::{Sender, channel}, thread, time::{Duration, Instant}};
+use std::{sync::mpsc::{Sender, channel}, thread, time::{Duration, Instant}};
 
-use crate::core::{ActiveProblem, HelperCommand, Language::Cpp, PassingCommand::{self, ToHelper}, RunnerCommand, Verdict, fs_ops::{PathManager, load_config}};
+use crate::core::{ActiveProblem, HelperCommand, Language::Cpp, PassingCommand::{self, ToHelper}, RunnerCommand, Verdict, fs_ops::FsOps};
 
 // need a way to track time, for compilation and running
 
-pub fn spawn_runner(main_tx: Sender<PassingCommand>) -> Sender<RunnerCommand> {
+pub fn spawn_runner(main_tx: Sender<PassingCommand>, paths: FsOps) -> Sender<RunnerCommand> {
     let (tx, rx) = channel::<RunnerCommand>();
     thread::spawn(move || {
         while let Ok(command) = rx.recv() {
             match command {
                 RunnerCommand::RunCode(problem) => {
                     // println!("compiling with");
-                    let results = compile_and_run(problem);
+                    let results = compile_and_run(&problem, &paths);
                     let _ = main_tx.send(ToHelper(HelperCommand::ShowResult(results)));
-                },
-                _ => {}
+                }
             }
         }
     });
     tx
 }
 
-pub fn compile_and_run(problem: ActiveProblem) -> Vec<Verdict> {
-    let paths = PathManager::new().0;
+pub fn compile_and_run(problem: &ActiveProblem, fs_ops: &FsOps) -> Vec<Verdict> {
     let code_path = problem.code_file.to_string_lossy().to_string();
-    let binary_path = paths.binary_dir.join(problem.name).to_string_lossy().to_string();
-    let (config, _) = load_config();
+    let binary_path = fs_ops.binary_dir.join(&problem.name).to_string_lossy().to_string();
+    let (config, _) = fs_ops.load_config();
 
     let _ = match config.language {
         Cpp => {
@@ -35,7 +33,7 @@ pub fn compile_and_run(problem: ActiveProblem) -> Vec<Verdict> {
             flags.push(binary_path.clone());
             match duct::cmd("g++", flags).unchecked().read() { // unchecked so that if this command crash my server will not crash
                 Ok(result) => result,
-                Err(_) => { return vec![Verdict::CompilationError] }
+                Err(e) => { return vec![Verdict::CompilationError { error: e.to_string() }] }
             }
         },
     };
@@ -49,15 +47,17 @@ pub fn compile_and_run(problem: ActiveProblem) -> Vec<Verdict> {
         
         let start = Instant::now();
 
-        let Ok(execute) =  executable
-            .stdin_bytes(tc.input.as_bytes().to_vec())
-            .stdout_capture()
-            .stderr_capture()
-            .unchecked()
-            .start() 
-        else { 
-            results.push(Verdict::CompilationError);
-            continue;
+        let execute = match executable
+        .stdin_bytes(tc.input.as_bytes().to_vec())
+        .stdout_capture()
+        .stderr_capture()
+        .unchecked()
+        .start() {
+            Ok(execute) => execute,
+            Err(e) => {
+                results.push(Verdict::CompilationError { error: e.to_string() });
+                continue;
+            }
         };
 
         let time_limit = Duration::from_millis(problem.time_limit);
@@ -75,7 +75,7 @@ pub fn compile_and_run(problem: ActiveProblem) -> Vec<Verdict> {
             if output.status.success() {
                 results.push(Verdict::Success { output, time: start.elapsed().as_millis() });
             } else {
-                results.push(Verdict::RuntimeError);
+                results.push(Verdict::RuntimeError { error: output.status.to_string() });
             }
         } else {
             let _ = execute.kill();
@@ -85,3 +85,5 @@ pub fn compile_and_run(problem: ActiveProblem) -> Vec<Verdict> {
 
     results
 }
+
+
